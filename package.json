@@ -1,0 +1,88 @@
+{
+  "name": "cai-connector",
+  "displayName": "CAI Connector",
+  "description": "Create and connect to Cloudera AI sessions over SSH.",
+  "version": "0.0.1",
+  "publisher": "your-publisher",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:caiConnector.connect",
+    "onCommand:caiConnector.disconnect",
+    "onCommand:caiConnector.browseRuntimes",
+    "onCommand:caiConnector.resetApiKey"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "caiConnector.connect",
+        "title": "Connect",
+        "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.disconnect",
+        "title": "Disconnect",
+        "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.browseRuntimes",
+        "title": "Browse Runtimes",
+        "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.resetApiKey",
+        "title": "Reset API Key",
+        "category": "CAI Connector"
+      }
+    ],
+    "configuration": {
+      "title": "CAI Connector",
+      "properties": {
+        "caiConnector.cmlUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Cloudera AI (CML) base URL."
+        },
+        "caiConnector.cdswctlPath": {
+          "type": "string",
+          "default": "",
+          "description": "Full path to cdswctl.exe. When empty, the extension looks for cdswctl.exe on PATH."
+        },
+        "caiConnector.defaultCpus": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "description": "Default CPU count."
+        },
+        "caiConnector.defaultMemoryGb": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Default memory in GB."
+        },
+        "caiConnector.cacheHours": {
+          "type": "number",
+          "default": 24,
+          "minimum": 1,
+          "description": "Runtime cache duration in hours."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "tsc -p ./"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.5"
+  }
+}
