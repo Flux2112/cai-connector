@@ -23,7 +23,7 @@ import * as cp from "child_process";
 import { ensureCdswctl, runCdswctl } from "./cdswctl";
 import { RuntimeManager } from "./runtimeManager";
 import { updateSshConfig } from "./sshConfig";
-import { LastSessionConfig, RuntimeData } from "./types";
+import { LastSessionConfig, RuntimeAddonData, RuntimeData } from "./types";
 
 let activeProject: string | null = null;
 
@@ -132,6 +132,15 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     return;
   }
 
+  const addons = await fetchRuntimeAddons(cdswctlPath, output);
+  if (!addons) {
+    return;
+  }
+  const addon = await pickRuntimeAddon(addons);
+  if (addon === undefined) {
+    return;
+  }
+
   const cpus = await promptNumber("CPUs", defaultCpus);
   if (!cpus) {
     return;
@@ -151,6 +160,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   const connected = await executeConnect(context, output, {
     project,
     runtimeId: runtime.id,
+    addonId: addon?.id ?? null,
     cpus,
     memory,
     cdswctlPath,
@@ -163,6 +173,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     saveLastSession(context, {
       projectName: project,
       runtimeId: runtime.id,
+      addonId: addon?.id ?? null,
       cpus,
       memoryGb: memory,
       timestamp: new Date().toISOString(),
@@ -173,6 +184,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 type ConnectParams = {
   project: string;
   runtimeId: number;
+  addonId: number | null;
   cpus: number;
   memory: number;
   cdswctlPath: string;
@@ -243,6 +255,9 @@ async function executeConnect(
     "-m",
     String(params.memory),
   ];
+  if (params.addonId !== null) {
+    args.push(`--addons=${String(params.addonId)}`);
+  }
 
   clearFile(statePath);
   clearFile(logPath);
@@ -358,10 +373,30 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     runtimeId = picked.id;
   }
 
+  // Validate saved addon if one was used
+  let addonId: number | null = lastSession.addonId ?? null;
+  if (addonId !== null) {
+    const allAddons = await fetchRuntimeAddons(cdswctlPath, output);
+    if (!allAddons) {
+      return;
+    }
+    const savedAddon = allAddons.find((a) => a.id === addonId);
+    if (!savedAddon) {
+      output.appendLine(`Saved addon ID ${addonId} no longer exists. Showing addon picker...`);
+      vscode.window.showWarningMessage("Previously used runtime addon is no longer available. Please select a new one.");
+      const pickedAddon = await pickRuntimeAddon(allAddons);
+      if (pickedAddon === undefined) {
+        return;
+      }
+      addonId = pickedAddon?.id ?? null;
+    }
+  }
+
   // Build confirmation message
   const runtimeLabel = savedRuntime
     ? `${savedRuntime.editor} - ${savedRuntime.kernel} (${savedRuntime.edition})`
     : `Runtime ${runtimeId}`;
+  const addonLabel = addonId !== null ? `, Addon ${addonId}` : "";
   const confirm = await vscode.window.showQuickPick(
     [
       { label: "Yes", description: "Recreate this session" },
@@ -369,7 +404,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     ],
     {
       title: "Recreate Last Session?",
-      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB`,
+      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB${addonLabel}`,
     },
   );
   if (!confirm || confirm.label !== "Yes") {
@@ -388,6 +423,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
   const connected = await executeConnect(context, output, {
     project: lastSession.projectName,
     runtimeId,
+    addonId,
     cpus: lastSession.cpus,
     memory: lastSession.memoryGb,
     cdswctlPath,
@@ -400,6 +436,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     saveLastSession(context, {
       projectName: lastSession.projectName,
       runtimeId,
+      addonId,
       cpus: lastSession.cpus,
       memoryGb: lastSession.memoryGb,
       timestamp: new Date().toISOString(),
@@ -570,6 +607,99 @@ async function pickRuntime(runtimes: RuntimeData[]): Promise<RuntimeData | null>
       qp.dispose();
       if (!accepted) {
         resolve(null);
+      }
+    });
+
+    qp.show();
+  });
+}
+
+async function fetchRuntimeAddons(
+  cdswctlPath: string,
+  output: vscode.OutputChannel,
+): Promise<RuntimeAddonData[] | null> {
+  output.appendLine("Fetching runtime addons from cdswctl...");
+  const result = await runCdswctl(cdswctlPath, ["runtime-addons", "list"], output, 30000);
+  if (result.exitCode !== 0) {
+    output.appendLine(`Error fetching runtime addons: ${result.stderr}`);
+    vscode.window.showErrorMessage("Failed to fetch runtime addons. Check output for details.");
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(result.stdout) as RuntimeAddonData[];
+    output.appendLine(`Fetched ${parsed.length} runtime addons.`);
+    return parsed;
+  } catch (err) {
+    output.appendLine(`Error parsing runtime addons: ${String(err)}`);
+    vscode.window.showErrorMessage("Failed to parse runtime addons. Check output for details.");
+    return null;
+  }
+}
+
+/**
+ * Shows a QuickPick for runtime addon selection.
+ * Returns the selected addon, `null` for "None", or `undefined` if the user dismissed.
+ */
+async function pickRuntimeAddon(addons: RuntimeAddonData[]): Promise<RuntimeAddonData | null | undefined> {
+  const noneItem: vscode.QuickPickItem = { label: "None", description: "No runtime addon" };
+  const addonItems: vscode.QuickPickItem[] = addons.map((a) => ({
+    label: `[${a.id}] ${a.displayName}`,
+    description: a.component,
+  }));
+  const allItems = [noneItem, ...addonItems];
+
+  return new Promise((resolve) => {
+    const qp = vscode.window.createQuickPick();
+    qp.title = "Select Runtime Addon";
+    qp.matchOnDescription = true;
+    qp.ignoreFocusOut = true;
+    qp.items = allItems;
+
+    qp.onDidChangeValue((value) => {
+      const terms = value
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 0);
+
+      if (terms.length <= 1) {
+        qp.items = allItems;
+        return;
+      }
+
+      qp.items = allItems.filter((item) => {
+        const haystack = `${item.label} ${item.description ?? ""}`.toLowerCase();
+        return terms.every((term) => haystack.includes(term));
+      });
+    });
+
+    let accepted = false;
+
+    qp.onDidAccept(() => {
+      accepted = true;
+      const selected = qp.selectedItems[0];
+      qp.dispose();
+      if (!selected) {
+        resolve(undefined);
+        return;
+      }
+      if (selected === noneItem) {
+        resolve(null);
+        return;
+      }
+      const idMatch = selected.label.match(/\[(\d+)\]/);
+      if (!idMatch) {
+        resolve(undefined);
+        return;
+      }
+      const id = Number(idMatch[1]);
+      resolve(addons.find((a) => a.id === id) || null);
+    });
+
+    qp.onDidHide(() => {
+      qp.dispose();
+      if (!accepted) {
+        resolve(undefined);
       }
     });
 
