@@ -4,6 +4,10 @@
   "description": "Create and connect to Cloudera AI sessions over SSH.",
   "version": "0.0.1",
   "publisher": "DefySoftwareSolutions",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux2112/cai-connector.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -77,12 +81,14 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "tsc -p ./"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
     "typescript": "^5.4.5"
   }
 }
