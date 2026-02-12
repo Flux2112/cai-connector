@@ -31,9 +31,16 @@ export type RuntimeCache = {
   runtimes: RuntimeData[];
 };
 
+export type RuntimeAddonData = {
+  id: number;
+  component: string;
+  displayName: string;
+};
+
 export type LastSessionConfig = {
   projectName: string;
   runtimeId: number;
+  addonId: number | null;
   cpus: number;
   memoryGb: number;
   timestamp: string;
