@@ -18,7 +18,8 @@
     "onCommand:caiConnector.connect",
     "onCommand:caiConnector.disconnect",
     "onCommand:caiConnector.browseRuntimes",
-    "onCommand:caiConnector.resetApiKey"
+    "onCommand:caiConnector.resetApiKey",
+    "onCommand:caiConnector.reconnect"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,6 +42,11 @@
       {
         "command": "caiConnector.resetApiKey",
         "title": "Reset API Key",
+        "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.reconnect",
+        "title": "Recreate Last Session",
         "category": "CAI Connector"
       }
     ],

@@ -30,3 +30,11 @@ export type RuntimeCache = {
   timestamp: string;
   runtimes: RuntimeData[];
 };
+
+export type LastSessionConfig = {
+  projectName: string;
+  runtimeId: number;
+  cpus: number;
+  memoryGb: number;
+  timestamp: string;
+};
