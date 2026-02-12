@@ -23,7 +23,7 @@ import * as cp from "child_process";
 import { ensureCdswctl, runCdswctl } from "./cdswctl";
 import { RuntimeManager } from "./runtimeManager";
 import { updateSshConfig } from "./sshConfig";
-import { RuntimeData } from "./types";
+import { LastSessionConfig, RuntimeData } from "./types";
 
 let activeProject: string | null = null;
 
@@ -54,6 +54,12 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.reconnect", async () => {
+      await reconnectFlow(context, output);
+    })
+  );
+
   // Check if an endpoint is already running from a previous session
   checkActiveEndpoint(context, output);
 }
@@ -72,7 +78,6 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   output.show(true);
 
   const config = vscode.workspace.getConfiguration("caiConnector");
-  const cmlUrl = config.get<string>("cmlUrl", "");
   const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
   const defaultCpus = config.get<number>("defaultCpus", 2);
   const defaultMemoryGb = config.get<number>("defaultMemoryGb", 4);
@@ -80,7 +85,6 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 
   const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
   const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
-  const logPath = path.join(context.globalStorageUri.fsPath, "endpoint_host.log");
 
   // Clean up any existing endpoint and SSH sessions before creating a new one
   if (fs.existsSync(statePath)) {
@@ -144,60 +148,107 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 
   output.appendLine(`Connecting to project ${project}...`);
 
-  const loginResult = await runCdswctl(
+  const connected = await executeConnect(context, output, {
+    project,
+    runtimeId: runtime.id,
+    cpus,
+    memory,
     cdswctlPath,
-    ["login", "-n", username, "-u", cmlUrl, "-y", "%CML_API_KEY%"],
+    username,
+    apiKey,
+    autoStopSessions: "prompt",
+  });
+
+  if (connected) {
+    saveLastSession(context, {
+      projectName: project,
+      runtimeId: runtime.id,
+      cpus,
+      memoryGb: memory,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+type ConnectParams = {
+  project: string;
+  runtimeId: number;
+  cpus: number;
+  memory: number;
+  cdswctlPath: string;
+  username: string;
+  apiKey: string;
+  autoStopSessions: boolean | "prompt";
+};
+
+async function executeConnect(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  params: ConnectParams,
+): Promise<boolean> {
+  const config = vscode.workspace.getConfiguration("caiConnector");
+  const cmlUrl = config.get<string>("cmlUrl", "");
+  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+  const logPath = path.join(context.globalStorageUri.fsPath, "endpoint_host.log");
+
+  const loginResult = await runCdswctl(
+    params.cdswctlPath,
+    ["login", "-n", params.username, "-u", cmlUrl, "-y", "%CML_API_KEY%"],
     output,
     30000,
-    { CML_API_KEY: apiKey },
+    { CML_API_KEY: params.apiKey },
   );
 
   if (loginResult.exitCode !== 0) {
     vscode.window.showErrorMessage("Login failed. See output for details.");
-    const sanitized = (loginResult.stderr || loginResult.stdout).split(apiKey).join("***");
+    const sanitized = (loginResult.stderr || loginResult.stdout).split(params.apiKey).join("***");
     output.appendLine(sanitized);
-    return;
+    return false;
   }
 
-  // Offer to stop existing SSH sessions in this project before creating a new one
-  const stopSessions = await vscode.window.showQuickPick(
-    [
-      { label: "No", description: "Keep existing sessions running", picked: true },
-      { label: "Yes", description: "Stop all existing sessions in this project" },
-    ],
-    {
-      title: "Stop Existing Sessions?",
-      placeHolder: `Stop all running sessions in ${project}?`,
-    },
-  );
-  if (!stopSessions) {
-    return;
-  }
-  if (stopSessions.label === "Yes") {
-    output.appendLine(`Stopping existing SSH sessions in project ${project}...`);
-    await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", project, "/a"], output, 30000);
-  } else {
-    output.appendLine("Skipping session cleanup.");
+  if (params.autoStopSessions === true) {
+    output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
+    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, 30000);
+  } else if (params.autoStopSessions === "prompt") {
+    const stopSessions = await vscode.window.showQuickPick(
+      [
+        { label: "No", description: "Keep existing sessions running", picked: true },
+        { label: "Yes", description: "Stop all existing sessions in this project" },
+      ],
+      {
+        title: "Stop Existing Sessions?",
+        placeHolder: `Stop all running sessions in ${params.project}?`,
+      },
+    );
+    if (!stopSessions) {
+      return false;
+    }
+    if (stopSessions.label === "Yes") {
+      output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
+      await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, 30000);
+    } else {
+      output.appendLine("Skipping session cleanup.");
+    }
   }
 
   output.appendLine("Creating SSH endpoint...");
   const args = [
     "ssh-endpoint",
     "-p",
-    project,
+    params.project,
     "-r",
-    String(runtime.id),
+    String(params.runtimeId),
     "-c",
-    String(cpus),
+    String(params.cpus),
     "-m",
-    String(memory),
+    String(params.memory),
   ];
 
   clearFile(statePath);
   clearFile(logPath);
 
   const helperPid = startEndpointHost(context, output, {
-    cdswctlPath,
+    cdswctlPath: params.cdswctlPath,
     args,
     statePath,
     logPath,
@@ -205,7 +256,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 
   if (!helperPid) {
     vscode.window.showErrorMessage("Failed to start endpoint host.");
-    return;
+    return false;
   }
 
   let state: EndpointState | null = null;
@@ -214,13 +265,13 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to establish SSH endpoint: ${String(err)}`);
     await disconnectFlow(context, output);
-    return;
+    return false;
   }
 
   if (!state || !state.port || !state.userAndHost) {
     vscode.window.showErrorMessage("Failed to parse SSH endpoint output.");
     await disconnectFlow(context, output);
-    return;
+    return false;
   }
 
   output.appendLine(`SSH: ${state.userAndHost}:${state.port}`);
@@ -228,7 +279,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   if (!updateSshConfig(state.port)) {
     vscode.window.showErrorMessage("Failed to update SSH config.");
     await disconnectFlow(context, output);
-    return;
+    return false;
   }
 
   output.appendLine("SSH config updated. Opening Remote-SSH window...");
@@ -237,6 +288,146 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true });
 
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
+  return true;
+}
+
+async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
+  if (process.platform !== "win32") {
+    vscode.window.showErrorMessage("CAI Connector is Windows-only right now.");
+    return;
+  }
+
+  output.show(true);
+
+  const lastSession = loadLastSession(context);
+  if (!lastSession) {
+    vscode.window.showInformationMessage("No previous session found.");
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration("caiConnector");
+  const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
+  const cacheHours = config.get<number>("cacheHours", 24);
+  const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
+  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+
+  // Clean up any existing endpoint
+  if (fs.existsSync(statePath)) {
+    const existing = readState(statePath);
+    if (existing?.helperPid && isProcessAlive(existing.helperPid)) {
+      output.appendLine("Cleaning up existing endpoint before reconnecting...");
+      stopEndpointHost(statePath, output);
+    } else {
+      clearFile(statePath);
+    }
+  }
+  killOrphanedHelperProcesses(output);
+
+  let cdswctlPath: string;
+  try {
+    cdswctlPath = await ensureCdswctl(output, cdswctlPathSetting);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Failed to locate cdswctl: ${String(err)}`);
+    return;
+  }
+
+  const apiKey = await getApiKey(context);
+  if (!apiKey) {
+    return;
+  }
+
+  // Validate saved runtime against cache
+  const runtimeManager = new RuntimeManager(cachePath, cacheHours);
+  const fetchSuccess = await runtimeManager.fetchRuntimes(cdswctlPath, false, output);
+  if (!fetchSuccess) {
+    vscode.window.showErrorMessage("Failed to fetch runtimes. Check output for details.");
+    return;
+  }
+
+  let runtimeId = lastSession.runtimeId;
+  const allRuntimes = runtimeManager.getAll();
+  const savedRuntime = allRuntimes.find((r) => r.id === runtimeId);
+
+  if (!savedRuntime) {
+    output.appendLine(`Saved runtime ID ${runtimeId} no longer exists. Showing runtime picker...`);
+    vscode.window.showWarningMessage("Previously used runtime is no longer available. Please select a new one.");
+    const picked = await pickRuntime(allRuntimes);
+    if (!picked) {
+      return;
+    }
+    runtimeId = picked.id;
+  }
+
+  // Build confirmation message
+  const runtimeLabel = savedRuntime
+    ? `${savedRuntime.editor} - ${savedRuntime.kernel} (${savedRuntime.edition})`
+    : `Runtime ${runtimeId}`;
+  const confirm = await vscode.window.showQuickPick(
+    [
+      { label: "Yes", description: "Recreate this session" },
+      { label: "No", description: "Cancel" },
+    ],
+    {
+      title: "Recreate Last Session?",
+      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB`,
+    },
+  );
+  if (!confirm || confirm.label !== "Yes") {
+    return;
+  }
+
+  const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
+  activeProject = lastSession.projectName;
+
+  output.appendLine(`Reconnecting to project ${lastSession.projectName}...`);
+
+  // Determine stop-sessions behavior based on project ownership
+  const projectOwner = lastSession.projectName.split("/")[0].toLowerCase();
+  const autoStopSessions: boolean | "prompt" = projectOwner === username ? true : "prompt";
+
+  const connected = await executeConnect(context, output, {
+    project: lastSession.projectName,
+    runtimeId,
+    cpus: lastSession.cpus,
+    memory: lastSession.memoryGb,
+    cdswctlPath,
+    username,
+    apiKey,
+    autoStopSessions,
+  });
+
+  if (connected) {
+    saveLastSession(context, {
+      projectName: lastSession.projectName,
+      runtimeId,
+      cpus: lastSession.cpus,
+      memoryGb: lastSession.memoryGb,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+function saveLastSession(context: vscode.ExtensionContext, session: LastSessionConfig): void {
+  const sessionPath = path.join(context.globalStorageUri.fsPath, "last_session.json");
+  try {
+    fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), "utf8");
+  } catch {
+    // Best-effort — don't block the flow
+  }
+}
+
+function loadLastSession(context: vscode.ExtensionContext): LastSessionConfig | null {
+  const sessionPath = path.join(context.globalStorageUri.fsPath, "last_session.json");
+  try {
+    if (!fs.existsSync(sessionPath)) {
+      return null;
+    }
+    const raw = fs.readFileSync(sessionPath, "utf8");
+    return JSON.parse(raw) as LastSessionConfig;
+  } catch {
+    return null;
+  }
 }
 
 async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
