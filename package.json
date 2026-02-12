@@ -75,6 +75,12 @@
           "minimum": 1,
           "description": "Default memory in GB."
         },
+        "caiConnector.defaultGpus": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Default number of GPUs."
+        },
         "caiConnector.cacheHours": {
           "type": "number",
           "default": 24,
