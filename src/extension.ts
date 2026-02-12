@@ -104,7 +104,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 
   const projectName = await vscode.window.showInputBox({
     title: "Project Name",
-    prompt: "Enter your CML project name",
+    prompt: "Enter your CML project name (or owner/project for another user's project)",
     ignoreFocusOut: true,
   });
   if (!projectName) {
@@ -139,7 +139,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   }
 
   const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
-  const project = `${username}/${projectName}`;
+  const project = projectName.includes("/") ? projectName : `${username}/${projectName}`;
   activeProject = project;
 
   output.appendLine(`Connecting to project ${project}...`);
@@ -159,9 +159,26 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     return;
   }
 
-  // Stop all existing SSH sessions in this project before creating a new one
-  output.appendLine(`Stopping existing SSH sessions in project ${project}...`);
-  await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", project, "/a"], output, 30000);
+  // Offer to stop existing SSH sessions in this project before creating a new one
+  const stopSessions = await vscode.window.showQuickPick(
+    [
+      { label: "No", description: "Keep existing sessions running", picked: true },
+      { label: "Yes", description: "Stop all existing sessions in this project" },
+    ],
+    {
+      title: "Stop Existing Sessions?",
+      placeHolder: `Stop all running sessions in ${project}?`,
+    },
+  );
+  if (!stopSessions) {
+    return;
+  }
+  if (stopSessions.label === "Yes") {
+    output.appendLine(`Stopping existing SSH sessions in project ${project}...`);
+    await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", project, "/a"], output, 30000);
+  } else {
+    output.appendLine("Skipping session cleanup.");
+  }
 
   output.appendLine("Creating SSH endpoint...");
   const args = [
