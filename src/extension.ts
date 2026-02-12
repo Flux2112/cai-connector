@@ -81,6 +81,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
   const defaultCpus = config.get<number>("defaultCpus", 2);
   const defaultMemoryGb = config.get<number>("defaultMemoryGb", 4);
+  const defaultGpus = config.get<number>("defaultGpus", 0);
   const cacheHours = config.get<number>("cacheHours", 24);
 
   const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
@@ -141,13 +142,8 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     return;
   }
 
-  const cpus = await promptNumber("CPUs", defaultCpus);
-  if (!cpus) {
-    return;
-  }
-
-  const memory = await promptNumber("Memory (GB)", defaultMemoryGb);
-  if (!memory) {
+  const resources = await promptResources(defaultCpus, defaultMemoryGb, defaultGpus);
+  if (!resources) {
     return;
   }
 
@@ -161,8 +157,9 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     project,
     runtimeId: runtime.id,
     addonId: addon?.id ?? null,
-    cpus,
-    memory,
+    cpus: resources.cpus,
+    memory: resources.memoryGb,
+    gpus: resources.gpus,
     cdswctlPath,
     username,
     apiKey,
@@ -174,8 +171,9 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
       projectName: project,
       runtimeId: runtime.id,
       addonId: addon?.id ?? null,
-      cpus,
-      memoryGb: memory,
+      cpus: resources.cpus,
+      memoryGb: resources.memoryGb,
+      gpus: resources.gpus,
       timestamp: new Date().toISOString(),
     });
   }
@@ -187,6 +185,7 @@ type ConnectParams = {
   addonId: number | null;
   cpus: number;
   memory: number;
+  gpus: number;
   cdswctlPath: string;
   username: string;
   apiKey: string;
@@ -254,6 +253,8 @@ async function executeConnect(
     String(params.cpus),
     "-m",
     String(params.memory),
+    "-g",
+    String(params.gpus),
   ];
   if (params.addonId !== null) {
     args.push(`--addons=${String(params.addonId)}`);
@@ -404,7 +405,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     ],
     {
       title: "Recreate Last Session?",
-      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB${addonLabel}`,
+      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB, ${lastSession.gpus ?? 0} GPU${addonLabel}`,
     },
   );
   if (!confirm || confirm.label !== "Yes") {
@@ -426,6 +427,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     addonId,
     cpus: lastSession.cpus,
     memory: lastSession.memoryGb,
+    gpus: lastSession.gpus ?? 0,
     cdswctlPath,
     username,
     apiKey,
@@ -439,6 +441,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
       addonId,
       cpus: lastSession.cpus,
       memoryGb: lastSession.memoryGb,
+      gpus: lastSession.gpus ?? 0,
       timestamp: new Date().toISOString(),
     });
   }
@@ -707,18 +710,41 @@ async function pickRuntimeAddon(addons: RuntimeAddonData[]): Promise<RuntimeAddo
   });
 }
 
-async function promptNumber(title: string, defaultValue: number): Promise<number | null> {
+type ResourceInput = {
+  cpus: number;
+  memoryGb: number;
+  gpus: number;
+};
+
+async function promptResources(
+  defaultCpus: number,
+  defaultMemoryGb: number,
+  defaultGpus: number,
+): Promise<ResourceInput | null> {
   const raw = await vscode.window.showInputBox({
-    title,
-    prompt: `Enter ${title.toLowerCase()}`,
-    value: String(defaultValue),
+    title: "Resources (CPUs, Memory GB, GPUs)",
+    prompt: "Enter as: CPUs, Memory (GB), GPUs — e.g. 2,4,0",
+    value: `${defaultCpus},${defaultMemoryGb},${defaultGpus}`,
     ignoreFocusOut: true,
     validateInput: (value) => {
-      if (!/^\d+$/.test(value)) {
-        return "Enter a valid number";
+      const parts = value.split(",").map((s) => s.trim());
+      if (parts.length !== 3) {
+        return "Enter exactly 3 values: CPUs, Memory (GB), GPUs";
       }
-      if (Number(value) < 1) {
-        return "Value must be at least 1";
+      for (const part of parts) {
+        if (!/^\d+$/.test(part)) {
+          return "All values must be non-negative integers";
+        }
+      }
+      const [cpus, mem, gpus] = parts.map(Number);
+      if (cpus < 1) {
+        return "CPUs must be at least 1";
+      }
+      if (mem < 1) {
+        return "Memory must be at least 1 GB";
+      }
+      if (gpus < 0) {
+        return "GPUs cannot be negative";
       }
       return undefined;
     },
@@ -728,7 +754,8 @@ async function promptNumber(title: string, defaultValue: number): Promise<number
     return null;
   }
 
-  return Number(raw);
+  const [cpus, memoryGb, gpus] = raw.split(",").map((s) => Number(s.trim()));
+  return { cpus, memoryGb, gpus };
 }
 
 

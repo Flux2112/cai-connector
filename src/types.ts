@@ -43,5 +43,6 @@ export type LastSessionConfig = {
   addonId: number | null;
   cpus: number;
   memoryGb: number;
+  gpus: number;
   timestamp: string;
 };
