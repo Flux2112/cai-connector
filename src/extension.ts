@@ -107,17 +107,17 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     return;
   }
 
+  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+  if (!loggedIn) {
+    return;
+  }
+
   const projectName = await vscode.window.showInputBox({
     title: "Project Name",
     prompt: "Enter your CML project name (or owner/project for another user's project)",
     ignoreFocusOut: true,
   });
   if (!projectName) {
-    return;
-  }
-
-  const apiKey = await getApiKey(context);
-  if (!apiKey) {
     return;
   }
 
@@ -161,8 +161,6 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     memory: resources.memoryGb,
     gpus: resources.gpus,
     cdswctlPath,
-    username,
-    apiKey,
     autoStopSessions: "prompt",
   });
 
@@ -187,8 +185,6 @@ type ConnectParams = {
   memory: number;
   gpus: number;
   cdswctlPath: string;
-  username: string;
-  apiKey: string;
   autoStopSessions: boolean | "prompt";
 };
 
@@ -197,25 +193,8 @@ async function executeConnect(
   output: vscode.OutputChannel,
   params: ConnectParams,
 ): Promise<boolean> {
-  const config = vscode.workspace.getConfiguration("caiConnector");
-  const cmlUrl = config.get<string>("cmlUrl", "");
   const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
   const logPath = path.join(context.globalStorageUri.fsPath, "endpoint_host.log");
-
-  const loginResult = await runCdswctl(
-    params.cdswctlPath,
-    ["login", "-n", params.username, "-u", cmlUrl, "-y", "%CML_API_KEY%"],
-    output,
-    30000,
-    { CML_API_KEY: params.apiKey },
-  );
-
-  if (loginResult.exitCode !== 0) {
-    vscode.window.showErrorMessage("Login failed. See output for details.");
-    const sanitized = (loginResult.stderr || loginResult.stdout).split(params.apiKey).join("***");
-    output.appendLine(sanitized);
-    return false;
-  }
 
   if (params.autoStopSessions === true) {
     output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
@@ -347,8 +326,8 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     return;
   }
 
-  const apiKey = await getApiKey(context);
-  if (!apiKey) {
+  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+  if (!loggedIn) {
     return;
   }
 
@@ -429,8 +408,6 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     memory: lastSession.memoryGb,
     gpus: lastSession.gpus ?? 0,
     cdswctlPath,
-    username,
-    apiKey,
     autoStopSessions,
   });
 
@@ -485,6 +462,11 @@ async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vsco
     return;
   }
 
+  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+  if (!loggedIn) {
+    return;
+  }
+
   const runtimeManager = new RuntimeManager(cachePath, cacheHours);
   const success = await runtimeManager.fetchRuntimes(cdswctlPath, false, output);
   if (!success) {
@@ -518,7 +500,12 @@ async function disconnectFlow(context: vscode.ExtensionContext, output: vscode.O
       output.appendLine(`Failed to locate cdswctl for disconnect: ${String(err)}`);
     }
     if (cdswctlPath) {
-      await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", activeProject, "/a"], output, 30000);
+      const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+      if (loggedIn) {
+        await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", activeProject, "/a"], output, 30000);
+      } else {
+        output.appendLine("Skipping remote session cleanup — login failed.");
+      }
     }
     activeProject = null;
   }
@@ -551,6 +538,38 @@ async function resetApiKeyFlow(context: vscode.ExtensionContext, output: vscode.
   await context.secrets.delete("CML_API_KEY");
   output.appendLine("API key has been removed from secret storage.");
   vscode.window.showInformationMessage("CML API key has been reset. You will be prompted on next connect.");
+}
+
+async function ensureLoggedIn(
+  context: vscode.ExtensionContext,
+  cdswctlPath: string,
+  output: vscode.OutputChannel,
+): Promise<boolean> {
+  const config = vscode.workspace.getConfiguration("caiConnector");
+  const cmlUrl = config.get<string>("cmlUrl", "");
+  const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
+
+  const apiKey = await getApiKey(context);
+  if (!apiKey) {
+    return false;
+  }
+
+  const loginResult = await runCdswctl(
+    cdswctlPath,
+    ["login", "-n", username, "-u", cmlUrl, "-y", "%CML_API_KEY%"],
+    output,
+    30000,
+    { CML_API_KEY: apiKey },
+  );
+
+  if (loginResult.exitCode !== 0) {
+    vscode.window.showErrorMessage("Login failed. See output for details.");
+    const sanitized = (loginResult.stderr || loginResult.stdout).split(apiKey).join("***");
+    output.appendLine(sanitized);
+    return false;
+  }
+
+  return true;
 }
 
 async function pickRuntime(runtimes: RuntimeData[]): Promise<RuntimeData | null> {
