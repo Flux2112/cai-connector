@@ -33,16 +33,28 @@ Output goes to `out/` as raw CommonJS. No bundler (webpack, esbuild, etc.) is co
 
 **No linter is configured.** Follow the code style guidelines below manually.
 
+## File Size Limit
+
+**Maximum 150 lines per TypeScript source file.** If a file exceeds this limit, refactor into smaller modules by responsibility.
+
 ## Directory Structure
 
 ```
 src/
-├── extension.ts       # Entry point, command registration, flows
+├── extension.ts       # Entry point, command registration, cache clearing, endpoint check
+├── auth.ts            # API key management, CML login, cdswctl resolution
 ├── cdswctl.ts         # CLI wrapper for cdswctl.exe
+├── connectFlow.ts     # Connect + browse runtimes orchestration
 ├── endpointHost.ts    # Standalone Node.js script (detached process)
+├── endpointManager.ts # Endpoint process lifecycle (start, stop, cleanup)
+├── reconnectFlow.ts   # Reconnect orchestration (recreate last session)
 ├── runtimeManager.ts  # Runtime fetching/caching
+├── runtimePicker.ts   # Runtime/addon selection QuickPick UI
+├── sessionManager.ts  # SSH endpoint execution, disconnect
 ├── sshConfig.ts       # SSH config file management
-└── types.ts           # Shared type definitions
+├── state.ts           # Shared mutable state (activeProject), session save/load
+├── types.ts           # Shared type definitions and constants
+└── utils.ts           # Shared helpers (file I/O, process checks, UI prompts)
 ```
 
 ## Code Style
@@ -125,12 +137,20 @@ function sleep(ms: number): Promise<void> {
 
 | Module | Responsibility |
 |--------|---------------|
-| `extension.ts` | Entry point, command registration, orchestrates flows |
+| `extension.ts` | Entry point — registers commands, delegates to flow modules, cache clearing, endpoint check |
+| `auth.ts` | API key prompting/storage, CML URL prompting, login, cdswctl resolution |
 | `cdswctl.ts` | CLI wrapper — locates and runs `cdswctl.exe` |
+| `connectFlow.ts` | `connectFlow` + `browseRuntimesFlow` orchestration |
 | `endpointHost.ts` | Standalone script — runs detached, spawns CLI, writes state |
+| `endpointManager.ts` | Start/stop/cleanup endpoint host processes, orphan detection |
+| `reconnectFlow.ts` | `reconnectFlow` — recreates last session with validation |
 | `runtimeManager.ts` | Fetches/caches runtimes with disk-based TTL |
+| `runtimePicker.ts` | QuickPick UI for runtime and runtime addon selection |
+| `sessionManager.ts` | `executeConnect`, `disconnectFlow` |
 | `sshConfig.ts` | Manages `~/.ssh/config` `Host cml` block |
-| `types.ts` | Shared type definitions |
+| `state.ts` | Shared mutable state (`activeProject` accessor), session save/load |
+| `types.ts` | Shared type definitions and constants |
+| `utils.ts` | `getStoragePath`, `sleep`, `isProcessAlive`, `clearFile`, `readState`, `buildEndpointArgs`, `multiTermFilter`, `promptResources` |
 
 ### Key Patterns
 
@@ -156,11 +176,7 @@ function sleep(ms: number): Promise<void> {
 
 ## Known Technical Debt
 
-`EndpointHostConfig` and `EndpointState` types are **duplicated** in:
-- `src/extension.ts` (lines ~397-413)
-- `src/endpointHost.ts` (lines ~22-38)
-
-These should be consolidated in `src/types.ts`. When touching these files, consider refactoring.
+`EndpointHostConfig` and `EndpointState` types in `src/endpointHost.ts` are duplicated from `src/types.ts`. When touching `endpointHost.ts`, consider importing from `types.ts` instead.
 
 ## Integration Points
 

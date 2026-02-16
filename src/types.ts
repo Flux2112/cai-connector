@@ -81,3 +81,14 @@ export type EndpointState = {
   helperPid?: number;
   timestamp: string;
 };
+
+// Shared constants
+export const SECRET_KEY = "CML_API_KEY";
+export const STATE_FILE = "endpoint_state.json";
+export const LOG_FILE = "endpoint_host.log";
+export const CACHE_FILE = "runtimes_cache.json";
+export const SESSION_FILE = "last_session.json";
+export const CDSWCTL_TIMEOUT_MS = 30000;
+export const ENDPOINT_READY_TIMEOUT_MS = 60000;
+export const ENDPOINT_POLL_INTERVAL_MS = 500;
+export const REMOTE_URI = "vscode-remote://ssh-remote+cml/home/cdsw";
