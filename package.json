@@ -12,15 +12,9 @@
     "vscode": "^1.85.0"
   },
   "icon": "cai-connector.png",
+  "license": "GPL-3.0-or-later",
   "categories": [
     "Other"
-  ],
-  "activationEvents": [
-    "onCommand:caiConnector.connect",
-    "onCommand:caiConnector.disconnect",
-    "onCommand:caiConnector.browseRuntimes",
-    "onCommand:caiConnector.resetApiKey",
-    "onCommand:caiConnector.reconnect"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -41,8 +35,8 @@
         "category": "CAI Connector"
       },
       {
-        "command": "caiConnector.resetApiKey",
-        "title": "Reset API Key",
+        "command": "caiConnector.clearCache",
+        "title": "Clear Cache",
         "category": "CAI Connector"
       },
       {

@@ -19,6 +19,8 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+const HOST_CML_PATTERN = /^Host\s+cml\s*\n(?:^[ \t]+\S.*\n?)*/gm;
+
 export function updateSshConfig(port: string): boolean {
   if (!port || !/^\d+$/.test(port)) {
     return false;
@@ -26,23 +28,32 @@ export function updateSshConfig(port: string): boolean {
 
   const sshDir = path.join(os.homedir(), ".ssh");
   const configFile = path.join(sshDir, "config");
-  fs.mkdirSync(sshDir, { recursive: true });
 
-  const content = fs.existsSync(configFile) ? fs.readFileSync(configFile, "utf8") : "";
+  try {
+    fs.mkdirSync(sshDir, { recursive: true });
+  } catch (err) {
+    throw new Error(`Failed to create SSH directory ${sshDir}: ${String(err)}`);
+  }
+
+  let content: string;
+  try {
+    content = fs.existsSync(configFile) ? fs.readFileSync(configFile, "utf8") : "";
+  } catch (err) {
+    throw new Error(`Failed to read SSH config ${configFile}: ${String(err)}`);
+  }
 
   const newBlock = `Host cml\n  HostName localhost\n  Port ${port}\n  User cdsw`;
-  const pattern = new RegExp("^Host\\s+cml\\s*\\n(?:^[ \\t]+\\S.*\\n?)*", "gm");
 
-  const matches = content.match(pattern);
+  const matches = content.match(HOST_CML_PATTERN);
   let updated = content;
 
   if (matches && matches.length > 1) {
-    updated = updated.replace(pattern, "");
+    updated = updated.replace(HOST_CML_PATTERN, "");
     updated = updated.replace(/\n{3,}/g, "\n\n");
   }
 
-  if (updated.match(pattern)) {
-    updated = updated.replace(pattern, newBlock);
+  if (updated.match(HOST_CML_PATTERN)) {
+    updated = updated.replace(HOST_CML_PATTERN, newBlock);
   } else {
     if (updated.trim()) {
       if (!updated.endsWith("\n\n")) {
@@ -54,8 +65,12 @@ export function updateSshConfig(port: string): boolean {
     }
   }
 
-  fs.writeFileSync(configFile, updated, "utf8");
+  try {
+    fs.writeFileSync(configFile, updated, "utf8");
+  } catch (err) {
+    throw new Error(`Failed to write SSH config ${configFile}: ${String(err)}`);
+  }
 
-  const finalMatches = updated.match(pattern);
+  const finalMatches = updated.match(HOST_CML_PATTERN);
   return !!finalMatches && finalMatches.length === 1;
 }

@@ -18,24 +18,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as cp from "child_process";
-
-type EndpointHostConfig = {
-  cdswctlPath: string;
-  args: string[];
-  statePath: string;
-  logPath: string;
-};
-
-type EndpointState = {
-  status: "starting" | "ready" | "error";
-  message?: string;
-  sshCommand?: string;
-  userAndHost?: string;
-  port?: string;
-  endpointPid?: number;
-  helperPid?: number;
-  timestamp: string;
-};
+import { EndpointHostConfig, EndpointState } from "./types";
 
 const configPath = process.argv[2];
 if (!configPath) {
@@ -58,8 +41,7 @@ const helperPid = process.pid;
 writeState({ status: "starting", helperPid, timestamp: new Date().toISOString() });
 
 logLine(`Starting endpoint host. Helper PID: ${helperPid}`);
-logLine(`cdswctl: ${hostConfig.cdswctlPath}`);
-logLine(`args: ${hostConfig.args.join(" ")}`);
+logLine(`Command: ${hostConfig.cdswctlPath} ${hostConfig.args.join(" ")}`);
 
 const endpoint = cp.spawn(hostConfig.cdswctlPath, hostConfig.args, {
   windowsHide: true,

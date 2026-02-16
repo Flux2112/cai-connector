@@ -15,15 +15,25 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as vscode from "vscode";
-import * as path from "path";
-import * as os from "os";
 import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import * as cp from "child_process";
+import * as vscode from "vscode";
 import { ensureCdswctl, runCdswctl } from "./cdswctl";
 import { RuntimeManager } from "./runtimeManager";
 import { updateSshConfig } from "./sshConfig";
-import { LastSessionConfig, RuntimeAddonData, RuntimeData } from "./types";
+import { ConnectParams, EndpointHostConfig, EndpointState, LastSessionConfig, ResourceInput, RuntimeAddonData, RuntimeData } from "./types";
+
+const SECRET_KEY = "CML_API_KEY";
+const STATE_FILE = "endpoint_state.json";
+const LOG_FILE = "endpoint_host.log";
+const CACHE_FILE = "runtimes_cache.json";
+const SESSION_FILE = "last_session.json";
+const CDSWCTL_TIMEOUT_MS = 30000;
+const ENDPOINT_READY_TIMEOUT_MS = 60000;
+const ENDPOINT_POLL_INTERVAL_MS = 500;
+const REMOTE_URI = "vscode-remote://ssh-remote+cml/home/cdsw";
 
 let activeProject: string | null = null;
 
@@ -49,8 +59,8 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.resetApiKey", async () => {
-      await resetApiKeyFlow(context, output);
+    vscode.commands.registerCommand("caiConnector.clearCache", async () => {
+      await clearCacheFlow(context, output);
     })
   );
 
@@ -78,37 +88,18 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   output.show(true);
 
   const config = vscode.workspace.getConfiguration("caiConnector");
-  const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
   const defaultCpus = config.get<number>("defaultCpus", 2);
   const defaultMemoryGb = config.get<number>("defaultMemoryGb", 4);
   const defaultGpus = config.get<number>("defaultGpus", 0);
   const cacheHours = config.get<number>("cacheHours", 24);
 
-  const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
-  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+  const cachePath = getStoragePath(context, CACHE_FILE);
+  const statePath = getStoragePath(context, STATE_FILE);
 
-  // Clean up any existing endpoint and SSH sessions before creating a new one
-  if (fs.existsSync(statePath)) {
-    const existing = readState(statePath);
-    if (existing?.helperPid && isProcessAlive(existing.helperPid)) {
-      output.appendLine("Cleaning up existing endpoint before reconnecting...");
-      stopEndpointHost(statePath, output);
-    } else {
-      clearFile(statePath);
-    }
-  }
-  killOrphanedHelperProcesses(output);
+  await cleanupExistingEndpoint(statePath, output);
 
-  let cdswctlPath: string;
-  try {
-    cdswctlPath = await ensureCdswctl(output, cdswctlPathSetting);
-  } catch (err) {
-    vscode.window.showErrorMessage(`Failed to locate cdswctl: ${String(err)}`);
-    return;
-  }
-
-  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
-  if (!loggedIn) {
+  const cdswctlPath = await resolveAndLogin(context, output);
+  if (!cdswctlPath) {
     return;
   }
 
@@ -177,67 +168,22 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
   }
 }
 
-type ConnectParams = {
-  project: string;
-  runtimeId: number;
-  addonId: number | null;
-  cpus: number;
-  memory: number;
-  gpus: number;
-  cdswctlPath: string;
-  autoStopSessions: boolean | "prompt";
-};
-
 async function executeConnect(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   params: ConnectParams,
 ): Promise<boolean> {
-  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
-  const logPath = path.join(context.globalStorageUri.fsPath, "endpoint_host.log");
+  const statePath = getStoragePath(context, STATE_FILE);
+  const logPath = getStoragePath(context, LOG_FILE);
 
-  if (params.autoStopSessions === true) {
-    output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, 30000);
-  } else if (params.autoStopSessions === "prompt") {
-    const stopSessions = await vscode.window.showQuickPick(
-      [
-        { label: "No", description: "Keep existing sessions running", picked: true },
-        { label: "Yes", description: "Stop all existing sessions in this project" },
-      ],
-      {
-        title: "Stop Existing Sessions?",
-        placeHolder: `Stop all running sessions in ${params.project}?`,
-      },
-    );
-    if (!stopSessions) {
-      return false;
-    }
-    if (stopSessions.label === "Yes") {
-      output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-      await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, 30000);
-    } else {
-      output.appendLine("Skipping session cleanup.");
-    }
+  const shouldContinue = await handleStopSessions(params, output);
+  if (!shouldContinue) {
+    return false;
   }
 
   output.appendLine("Creating SSH endpoint...");
-  const args = [
-    "ssh-endpoint",
-    "-p",
-    params.project,
-    "-r",
-    String(params.runtimeId),
-    "-c",
-    String(params.cpus),
-    "-m",
-    String(params.memory),
-    "-g",
-    String(params.gpus),
-  ];
-  if (params.addonId !== null) {
-    args.push(`--addons=${String(params.addonId)}`);
-  }
+  const args = buildEndpointArgs(params);
+  output.appendLine(`Command: ${params.cdswctlPath} ${args.join(" ")}`);
 
   clearFile(statePath);
   clearFile(logPath);
@@ -256,7 +202,7 @@ async function executeConnect(
 
   let state: EndpointState | null = null;
   try {
-    state = await waitForEndpointReady(statePath, output, 60000);
+    state = await waitForEndpointReady(statePath, output, ENDPOINT_READY_TIMEOUT_MS);
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to establish SSH endpoint: ${String(err)}`);
     await disconnectFlow(context, output);
@@ -279,7 +225,7 @@ async function executeConnect(
 
   output.appendLine("SSH config updated. Opening Remote-SSH window...");
 
-  const remoteUri = vscode.Uri.parse("vscode-remote://ssh-remote+cml/home/cdsw");
+  const remoteUri = vscode.Uri.parse(REMOTE_URI);
   await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true });
 
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
@@ -301,33 +247,14 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
   }
 
   const config = vscode.workspace.getConfiguration("caiConnector");
-  const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
   const cacheHours = config.get<number>("cacheHours", 24);
-  const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
-  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+  const cachePath = getStoragePath(context, CACHE_FILE);
+  const statePath = getStoragePath(context, STATE_FILE);
 
-  // Clean up any existing endpoint
-  if (fs.existsSync(statePath)) {
-    const existing = readState(statePath);
-    if (existing?.helperPid && isProcessAlive(existing.helperPid)) {
-      output.appendLine("Cleaning up existing endpoint before reconnecting...");
-      stopEndpointHost(statePath, output);
-    } else {
-      clearFile(statePath);
-    }
-  }
-  killOrphanedHelperProcesses(output);
+  await cleanupExistingEndpoint(statePath, output);
 
-  let cdswctlPath: string;
-  try {
-    cdswctlPath = await ensureCdswctl(output, cdswctlPathSetting);
-  } catch (err) {
-    vscode.window.showErrorMessage(`Failed to locate cdswctl: ${String(err)}`);
-    return;
-  }
-
-  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
-  if (!loggedIn) {
+  const cdswctlPath = await resolveAndLogin(context, output);
+  if (!cdswctlPath) {
     return;
   }
 
@@ -425,7 +352,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
 }
 
 function saveLastSession(context: vscode.ExtensionContext, session: LastSessionConfig): void {
-  const sessionPath = path.join(context.globalStorageUri.fsPath, "last_session.json");
+  const sessionPath = getStoragePath(context, SESSION_FILE);
   try {
     fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
     fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), "utf8");
@@ -435,7 +362,7 @@ function saveLastSession(context: vscode.ExtensionContext, session: LastSessionC
 }
 
 function loadLastSession(context: vscode.ExtensionContext): LastSessionConfig | null {
-  const sessionPath = path.join(context.globalStorageUri.fsPath, "last_session.json");
+  const sessionPath = getStoragePath(context, SESSION_FILE);
   try {
     if (!fs.existsSync(sessionPath)) {
       return null;
@@ -449,21 +376,11 @@ function loadLastSession(context: vscode.ExtensionContext): LastSessionConfig | 
 
 async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
   const config = vscode.workspace.getConfiguration("caiConnector");
-  const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
   const cacheHours = config.get<number>("cacheHours", 24);
+  const cachePath = getStoragePath(context, CACHE_FILE);
 
-  const cachePath = path.join(context.globalStorageUri.fsPath, "runtimes_cache.json");
-
-  let cdswctlPath: string;
-  try {
-    cdswctlPath = await ensureCdswctl(output, cdswctlPathSetting);
-  } catch (err) {
-    vscode.window.showErrorMessage(`Failed to locate cdswctl: ${String(err)}`);
-    return;
-  }
-
-  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
-  if (!loggedIn) {
+  const cdswctlPath = await resolveAndLogin(context, output);
+  if (!cdswctlPath) {
     return;
   }
 
@@ -479,33 +396,19 @@ async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vsco
 
 async function disconnectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
   output.show(true);
-  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+  const statePath = getStoragePath(context, STATE_FILE);
 
   output.appendLine("Stopping ssh-endpoint process...");
   stopEndpointHost(statePath, output);
 
   // Also stop CML sessions if we know the project
   if (activeProject) {
-    const config = vscode.workspace.getConfiguration("caiConnector");
-    const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
-
     output.appendLine(`Stopping sessions in project ${activeProject}...`);
-    let cdswctlPath: string | undefined;
-    try {
-      cdswctlPath = await ensureCdswctl(
-        output,
-        cdswctlPathSetting
-      );
-    } catch (err) {
-      output.appendLine(`Failed to locate cdswctl for disconnect: ${String(err)}`);
-    }
+    const cdswctlPath = await resolveAndLogin(context, output);
     if (cdswctlPath) {
-      const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
-      if (loggedIn) {
-        await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", activeProject, "/a"], output, 30000);
-      } else {
-        output.appendLine("Skipping remote session cleanup — login failed.");
-      }
+      await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", activeProject, "/a"], output, CDSWCTL_TIMEOUT_MS);
+    } else {
+      output.appendLine("Skipping remote session cleanup — login failed.");
     }
     activeProject = null;
   }
@@ -514,7 +417,7 @@ async function disconnectFlow(context: vscode.ExtensionContext, output: vscode.O
 }
 
 async function getApiKey(context: vscode.ExtensionContext): Promise<string | null> {
-  const stored = await context.secrets.get("CML_API_KEY");
+  const stored = await context.secrets.get(SECRET_KEY);
   if (stored) {
     return stored;
   }
@@ -530,14 +433,75 @@ async function getApiKey(context: vscode.ExtensionContext): Promise<string | nul
     return null;
   }
 
-  await context.secrets.store("CML_API_KEY", apiKey);
+  await context.secrets.store(SECRET_KEY, apiKey);
   return apiKey;
 }
 
-async function resetApiKeyFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
-  await context.secrets.delete("CML_API_KEY");
-  output.appendLine("API key has been removed from secret storage.");
-  vscode.window.showInformationMessage("CML API key has been reset. You will be prompted on next connect.");
+async function clearCacheFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
+  const items: vscode.QuickPickItem[] = [
+    { label: "Runtime cache", description: "Deletes cached runtime list; forces re-fetch on next connect", picked: false },
+    { label: "CML URL", description: "Clears the stored Cloudera AI base URL; will prompt again on next login", picked: false },
+    { label: "API key", description: "Removes the stored API key from secret storage", picked: false },
+  ];
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title: "Clear Cache",
+    placeHolder: "Select items to clear",
+    canPickMany: true,
+    ignoreFocusOut: true,
+  });
+
+  if (!selected || selected.length === 0) {
+    return;
+  }
+
+  const labels = selected.map((s) => s.label);
+  const cleared: string[] = [];
+
+  if (labels.includes("Runtime cache")) {
+    clearFile(getStoragePath(context, CACHE_FILE));
+    cleared.push("runtime cache");
+  }
+
+  if (labels.includes("CML URL")) {
+    const config = vscode.workspace.getConfiguration("caiConnector");
+    await config.update("cmlUrl", "", vscode.ConfigurationTarget.Global);
+    cleared.push("CML URL");
+  }
+
+  if (labels.includes("API key")) {
+    await context.secrets.delete(SECRET_KEY);
+    cleared.push("API key");
+  }
+
+  const summary = cleared.join(", ");
+  output.appendLine(`Cleared: ${summary}.`);
+  vscode.window.showInformationMessage(`Cleared: ${summary}.`);
+}
+
+async function promptCmlUrl(): Promise<string | null> {
+  const url = await vscode.window.showInputBox({
+    title: "Cloudera AI Base URL",
+    prompt: "Enter the base URL of your Cloudera AI (CML) instance",
+    placeHolder: "https://your-cml-instance.example.com/",
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return "URL cannot be empty.";
+      }
+      if (!trimmed.startsWith("https://")) {
+        return "URL must start with https://";
+      }
+      return null;
+    },
+  });
+
+  if (!url) {
+    return null;
+  }
+
+  return url.trim();
 }
 
 async function ensureLoggedIn(
@@ -546,7 +510,16 @@ async function ensureLoggedIn(
   output: vscode.OutputChannel,
 ): Promise<boolean> {
   const config = vscode.workspace.getConfiguration("caiConnector");
-  const cmlUrl = config.get<string>("cmlUrl", "");
+  let cmlUrl = config.get<string>("cmlUrl", "");
+  if (!cmlUrl) {
+    const prompted = await promptCmlUrl();
+    if (!prompted) {
+      return false;
+    }
+    await config.update("cmlUrl", prompted, vscode.ConfigurationTarget.Global);
+    output.appendLine(`CML URL stored: ${prompted}`);
+    cmlUrl = prompted;
+  }
   const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
 
   const apiKey = await getApiKey(context);
@@ -556,10 +529,10 @@ async function ensureLoggedIn(
 
   const loginResult = await runCdswctl(
     cdswctlPath,
-    ["login", "-n", username, "-u", cmlUrl, "-y", "%CML_API_KEY%"],
+    ["login", "-n", username, "-u", cmlUrl, "-y", `%${SECRET_KEY}%`],
     output,
-    30000,
-    { CML_API_KEY: apiKey },
+    CDSWCTL_TIMEOUT_MS,
+    { [SECRET_KEY]: apiKey },
   );
 
   if (loginResult.exitCode !== 0) {
@@ -588,22 +561,7 @@ async function pickRuntime(runtimes: RuntimeData[]): Promise<RuntimeData | null>
     qp.items = allItems;
 
     qp.onDidChangeValue((value) => {
-      const terms = value
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((t) => t.length > 0);
-
-      if (terms.length <= 1) {
-        // Single term or empty: let VS Code's built-in fuzzy matching handle it
-        qp.items = allItems;
-        return;
-      }
-
-      // Multiple terms: filter items that contain ALL terms (case-insensitive)
-      qp.items = allItems.filter((item) => {
-        const haystack = `${item.label} ${item.description ?? ""} ${item.detail ?? ""}`.toLowerCase();
-        return terms.every((term) => haystack.includes(term));
-      });
+      qp.items = multiTermFilter(allItems, value);
     });
 
     let accepted = false;
@@ -641,7 +599,7 @@ async function fetchRuntimeAddons(
   output: vscode.OutputChannel,
 ): Promise<RuntimeAddonData[] | null> {
   output.appendLine("Fetching runtime addons from cdswctl...");
-  const result = await runCdswctl(cdswctlPath, ["runtime-addons", "list"], output, 30000);
+  const result = await runCdswctl(cdswctlPath, ["runtime-addons", "list"], output, CDSWCTL_TIMEOUT_MS);
   if (result.exitCode !== 0) {
     output.appendLine(`Error fetching runtime addons: ${result.stderr}`);
     vscode.window.showErrorMessage("Failed to fetch runtime addons. Check output for details.");
@@ -679,20 +637,7 @@ async function pickRuntimeAddon(addons: RuntimeAddonData[]): Promise<RuntimeAddo
     qp.items = allItems;
 
     qp.onDidChangeValue((value) => {
-      const terms = value
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((t) => t.length > 0);
-
-      if (terms.length <= 1) {
-        qp.items = allItems;
-        return;
-      }
-
-      qp.items = allItems.filter((item) => {
-        const haystack = `${item.label} ${item.description ?? ""}`.toLowerCase();
-        return terms.every((term) => haystack.includes(term));
-      });
+      qp.items = multiTermFilter(allItems, value);
     });
 
     let accepted = false;
@@ -728,12 +673,6 @@ async function pickRuntimeAddon(addons: RuntimeAddonData[]): Promise<RuntimeAddo
     qp.show();
   });
 }
-
-type ResourceInput = {
-  cpus: number;
-  memoryGb: number;
-  gpus: number;
-};
 
 async function promptResources(
   defaultCpus: number,
@@ -777,24 +716,6 @@ async function promptResources(
   return { cpus, memoryGb, gpus };
 }
 
-
-type EndpointHostConfig = {
-  cdswctlPath: string;
-  args: string[];
-  statePath: string;
-  logPath: string;
-};
-
-type EndpointState = {
-  status: "starting" | "ready" | "error";
-  message?: string;
-  sshCommand?: string;
-  userAndHost?: string;
-  port?: string;
-  endpointPid?: number;
-  helperPid?: number;
-  timestamp: string;
-};
 
 function startEndpointHost(
   context: vscode.ExtensionContext,
@@ -843,7 +764,7 @@ async function waitForEndpointReady(
         throw new Error(state.message || "Endpoint host reported an error.");
       }
     }
-    await sleep(500);
+    await sleep(ENDPOINT_POLL_INTERVAL_MS);
   }
   throw new Error("Timed out waiting for SSH endpoint.");
 }
@@ -904,17 +825,20 @@ function stopEndpointHost(statePath: string, output?: vscode.OutputChannel): voi
   clearFile(statePath);
 }
 
-function killOrphanedHelperProcesses(output: vscode.OutputChannel): void {
+async function killOrphanedHelperProcesses(output: vscode.OutputChannel): Promise<void> {
   try {
-    const result = cp.execSync(
-      "wmic process where \"commandline like '%endpointHost.js%' and name='node.exe'\" get processid /format:list",
-      { encoding: "utf8", windowsHide: true },
-    );
+    const result = await new Promise<string>((resolve, reject) => {
+      cp.exec(
+        "powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*endpointHost.js*' -and $_.Name -eq 'node.exe' } | Select-Object -ExpandProperty ProcessId\"",
+        { encoding: "utf8", windowsHide: true },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      );
+    });
     const pids = result
       .split(/\r?\n/)
-      .map((line) => line.replace(/\s/g, ""))
-      .filter((line) => line.startsWith("ProcessId="))
-      .map((line) => Number(line.split("=")[1]))
+      .map((line) => line.trim())
+      .filter((line) => /^\d+$/.test(line))
+      .map(Number)
       .filter((pid) => pid && pid !== process.pid);
 
     for (const pid of pids) {
@@ -926,7 +850,7 @@ function killOrphanedHelperProcesses(output: vscode.OutputChannel): void {
       }
     }
   } catch {
-    // wmic may fail on some systems; best-effort cleanup
+    // PowerShell may fail on some systems; best-effort cleanup
   }
 }
 
@@ -943,8 +867,48 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function getStoragePath(context: vscode.ExtensionContext, fileName: string): string {
+  return path.join(context.globalStorageUri.fsPath, fileName);
+}
+
+async function cleanupExistingEndpoint(statePath: string, output: vscode.OutputChannel): Promise<void> {
+  if (fs.existsSync(statePath)) {
+    const existing = readState(statePath);
+    if (existing?.helperPid && isProcessAlive(existing.helperPid)) {
+      output.appendLine("Cleaning up existing endpoint before reconnecting...");
+      stopEndpointHost(statePath, output);
+    } else {
+      clearFile(statePath);
+    }
+  }
+  await killOrphanedHelperProcesses(output);
+}
+
+async function resolveAndLogin(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<string | null> {
+  const config = vscode.workspace.getConfiguration("caiConnector");
+  const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
+
+  let cdswctlPath: string;
+  try {
+    cdswctlPath = await ensureCdswctl(output, cdswctlPathSetting);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Failed to locate cdswctl: ${String(err)}`);
+    return null;
+  }
+
+  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+  if (!loggedIn) {
+    return null;
+  }
+
+  return cdswctlPath;
+}
+
 function checkActiveEndpoint(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
-  const statePath = path.join(context.globalStorageUri.fsPath, "endpoint_state.json");
+  const statePath = getStoragePath(context, STATE_FILE);
   if (!fs.existsSync(statePath)) {
     return;
   }
@@ -965,4 +929,68 @@ function checkActiveEndpoint(context: vscode.ExtensionContext, output: vscode.Ou
   vscode.window.showInformationMessage(
     `An SSH endpoint is running on port ${state.port}. It will be stopped automatically when you connect again.`,
   );
+}
+
+async function handleStopSessions(params: ConnectParams, output: vscode.OutputChannel): Promise<boolean> {
+  if (params.autoStopSessions === true) {
+    output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
+    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
+  } else if (params.autoStopSessions === "prompt") {
+    const stopSessions = await vscode.window.showQuickPick(
+      [
+        { label: "No", description: "Keep existing sessions running", picked: true },
+        { label: "Yes", description: "Stop all existing sessions in this project" },
+      ],
+      {
+        title: "Stop Existing Sessions?",
+        placeHolder: `Stop all running sessions in ${params.project}?`,
+      },
+    );
+    if (!stopSessions) {
+      return false;
+    }
+    if (stopSessions.label === "Yes") {
+      output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
+      await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
+    } else {
+      output.appendLine("Skipping session cleanup.");
+    }
+  }
+  return true;
+}
+
+function buildEndpointArgs(params: ConnectParams): string[] {
+  const args = [
+    "ssh-endpoint",
+    "-p",
+    params.project,
+    "-r",
+    String(params.runtimeId),
+    "-c",
+    String(params.cpus),
+    "-m",
+    String(params.memory),
+    "-g",
+    String(params.gpus),
+  ];
+  if (params.addonId !== null) {
+    args.push(`--addons=${String(params.addonId)}`);
+  }
+  return args;
+}
+
+function multiTermFilter(items: vscode.QuickPickItem[], value: string): vscode.QuickPickItem[] {
+  const terms = value
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  if (terms.length <= 1) {
+    return items;
+  }
+
+  return items.filter((item) => {
+    const haystack = `${item.label} ${item.description ?? ""} ${item.detail ?? ""}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
 }

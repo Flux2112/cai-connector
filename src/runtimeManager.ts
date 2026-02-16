@@ -35,41 +35,10 @@ export class RuntimeManager {
     return this.runtimes;
   }
 
-  public search(query: string): RuntimeData[] {
-    if (!query) {
-      return this.runtimes;
-    }
-
-    const terms = query
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((t) => t.length > 0);
-
-    if (terms.length === 0) {
-      return this.runtimes;
-    }
-
-    return this.runtimes.filter((r) => {
-      const haystack = [
-        String(r.id),
-        r.imageIdentifier,
-        r.editor,
-        r.kernel,
-        r.edition,
-        r.description,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return terms.every((term) => haystack.includes(term));
-    });
-  }
-
   public async fetchRuntimes(cdswctlPath: string, forceRefresh: boolean, output: vscode.OutputChannel): Promise<boolean> {
-    if (!forceRefresh && this.isCacheValid()) {
-      if (this.loadFromCache()) {
-        output.appendLine(`Loaded ${this.runtimes.length} runtimes from cache.`);
-        return true;
-      }
+    if (!forceRefresh && this.loadCacheIfValid()) {
+      output.appendLine(`Loaded ${this.runtimes.length} runtimes from cache.`);
+      return true;
     }
 
     output.appendLine("Fetching runtimes from cdswctl...");
@@ -96,7 +65,7 @@ export class RuntimeManager {
     }
   }
 
-  private isCacheValid(): boolean {
+  private loadCacheIfValid(): boolean {
     if (!fs.existsSync(this.cachePath)) {
       return false;
     }
@@ -104,16 +73,9 @@ export class RuntimeManager {
       const raw = fs.readFileSync(this.cachePath, "utf8");
       const data = JSON.parse(raw) as RuntimeCache;
       const cacheTime = new Date(data.timestamp).getTime();
-      return Date.now() - cacheTime < this.cacheDurationMs;
-    } catch {
-      return false;
-    }
-  }
-
-  private loadFromCache(): boolean {
-    try {
-      const raw = fs.readFileSync(this.cachePath, "utf8");
-      const data = JSON.parse(raw) as RuntimeCache;
+      if (Date.now() - cacheTime >= this.cacheDurationMs) {
+        return false;
+      }
       this.runtimes = data.runtimes || [];
       return true;
     } catch {

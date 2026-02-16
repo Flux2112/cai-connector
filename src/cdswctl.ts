@@ -17,8 +17,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import * as vscode from "vscode";
 import * as cp from "child_process";
+import * as vscode from "vscode";
 
 export type CdswctlResult = {
   exitCode: number;
@@ -114,25 +114,6 @@ export async function runCdswctl(
   });
 }
 
-export function startSshEndpoint(
-  cdswctlPath: string,
-  args: string[],
-  output: vscode.OutputChannel
-): cp.ChildProcessWithoutNullStreams {
-  if (!fs.existsSync(cdswctlPath)) {
-    throw new Error(`cdswctl.exe not found: ${cdswctlPath}`);
-  }
-  output.appendLine(`Command: ${cdswctlPath} ${args.join(" ")}`);
-  const child = cp.spawn(cdswctlPath, args, {
-    windowsHide: true,
-    stdio: ["pipe", "pipe", "pipe"],
-    cwd: path.dirname(cdswctlPath),
-  });
-  logStream(child.stdout, output, "cdswctl");
-  logStream(child.stderr, output, "cdswctl err");
-  return child;
-}
-
 function execFileFallback(
   cdswctlPath: string,
   args: string[],
@@ -173,25 +154,4 @@ function findOnPath(fileName: string): string | null {
     }
   }
   return null;
-}
-
-function logStream(stream: NodeJS.ReadableStream, output: vscode.OutputChannel, prefix: string): void {
-  let buffer = "";
-  stream.on("data", (data) => {
-    buffer += data.toString();
-    const parts = buffer.split(/\r?\n/);
-    buffer = parts.pop() || "";
-    for (const part of parts) {
-      const line = part.trimEnd();
-      if (line) {
-        output.appendLine(`${prefix}: ${line}`);
-      }
-    }
-  });
-
-  stream.on("close", () => {
-    if (buffer.trim()) {
-      output.appendLine(`${prefix}: ${buffer.trimEnd()}`);
-    }
-  });
 }

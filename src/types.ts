@@ -46,3 +46,38 @@ export type LastSessionConfig = {
   gpus: number;
   timestamp: string;
 };
+
+export type ConnectParams = {
+  project: string;
+  runtimeId: number;
+  addonId: number | null;
+  cpus: number;
+  memory: number;
+  gpus: number;
+  cdswctlPath: string;
+  autoStopSessions: boolean | "prompt";
+};
+
+export type ResourceInput = {
+  cpus: number;
+  memoryGb: number;
+  gpus: number;
+};
+
+export type EndpointHostConfig = {
+  cdswctlPath: string;
+  args: string[];
+  statePath: string;
+  logPath: string;
+};
+
+export type EndpointState = {
+  status: "starting" | "ready" | "error";
+  message?: string;
+  sshCommand?: string;
+  userAndHost?: string;
+  port?: string;
+  endpointPid?: number;
+  helperPid?: number;
+  timestamp: string;
+};
