@@ -27,6 +27,7 @@ export function startEndpointHost(
   output: vscode.OutputChannel,
   config: EndpointHostConfig,
 ): number | null {
+  output.appendLine(`Idle timeout: ${config.idleTimeoutMinutes} min (0 = disabled)`);
   try {
     fs.mkdirSync(path.dirname(config.statePath), { recursive: true });
     fs.writeFileSync(config.statePath, "", "utf8");

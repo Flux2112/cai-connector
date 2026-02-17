@@ -69,6 +69,8 @@ export type EndpointHostConfig = {
   args: string[];
   statePath: string;
   logPath: string;
+  project: string;
+  idleTimeoutMinutes: number;
 };
 
 export type EndpointState = {
