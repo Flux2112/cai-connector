@@ -71,7 +71,7 @@ export async function executeConnect(
 
   const idleTimeoutMinutes = vscode.workspace
     .getConfiguration("caiConnector")
-    .get<number>("idleTimeoutMinutes", 5);
+    .get<number>("idleTimeoutMinutes", 30);
 
   const helperPid = startEndpointHost(context, output, {
     cdswctlPath: params.cdswctlPath,

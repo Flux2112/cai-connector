@@ -84,7 +84,7 @@
         },
         "caiConnector.idleTimeoutMinutes": {
           "type": "number",
-          "default": 1,
+          "default": 30,
           "minimum": 0,
           "description": "Minutes of SSH inactivity before the endpoint auto-shuts down. Set to 0 to disable idle shutdown."
         }

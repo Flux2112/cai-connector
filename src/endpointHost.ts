@@ -19,7 +19,15 @@ import * as path from "path";
 import * as cp from "child_process";
 import { EndpointHostConfig, EndpointState } from "./types";
 import { startIdleMonitor } from "./idleMonitor";
-import { ensureDir, readJson, safeKill, splitLines, writeStateFile, appendLog } from "./endpointHostUtils";
+import {
+  ensureDir,
+  readJson,
+  safeKill,
+  splitLines,
+  stopCmlSessions,
+  writeStateFile,
+  appendLog,
+} from "./endpointHostUtils";
 
 const configPath = process.argv[2];
 if (!configPath) {
@@ -53,6 +61,8 @@ const endpoint = cp.spawn(hostConfig.cdswctlPath, hostConfig.args, {
 });
 
 let endpointReady = false;
+let idleMonitor: { markConnectionSeen: () => void } | null = null;
+let shuttingDown = false;
 
 endpoint.stdout?.on("data", (data) => {
   onEndpointData(data.toString(), false);
@@ -64,6 +74,9 @@ endpoint.stderr?.on("data", (data) => {
 
 endpoint.on("exit", (code) => {
   logLine(`cdswctl exited with code ${code ?? "unknown"}.`);
+  if (shuttingDown) {
+    return;
+  }
   if (!endpointReady) {
     writeState({
       status: "error",
@@ -78,6 +91,9 @@ endpoint.on("exit", (code) => {
 
 endpoint.on("error", (err) => {
   logLine(`cdswctl error: ${String(err)}`);
+  if (shuttingDown) {
+    return;
+  }
   writeState({
     status: "error",
     message: String(err),
@@ -90,24 +106,20 @@ endpoint.on("error", (err) => {
 
 const TIMEOUT_MS = 10 * 60 * 60 * 1000; // 10 hours
 const timeoutTimer = setTimeout(() => {
-  logLine("Helper reached 10-hour timeout. Shutting down...");
-  writeState({
-    status: "error",
-    message: "Session timed out after 10 hours.",
-    endpointPid: endpoint.pid,
-    helperPid,
-    timestamp: new Date().toISOString(),
-  });
-  safeKill(endpoint.pid);
-  process.exit(0);
+  shutdown("Session timed out after 10 hours.");
 }, TIMEOUT_MS);
 timeoutTimer.unref();
 
 process.on("SIGTERM", () => {
-  logLine("Helper received SIGTERM. Stopping endpoint...");
-  clearTimeout(timeoutTimer);
-  safeKill(endpoint.pid);
-  process.exit(0);
+  shutdown("Helper received SIGTERM.");
+});
+
+process.on("uncaughtException", (err) => {
+  shutdown(`Helper uncaught exception: ${String(err)}`, 1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  shutdown(`Helper unhandled rejection: ${String(reason)}`, 1);
 });
 
 process.on("exit", () => {
@@ -119,6 +131,9 @@ function onEndpointData(text: string, isError: boolean): void {
   for (const line of lines) {
     const prefix = isError ? "cdswctl err" : "cdswctl";
     logLine(`${prefix}: ${line}`);
+    if (/Handling connection on port/i.test(line)) {
+      idleMonitor?.markConnectionSeen();
+    }
     if (!endpointReady) {
       const match = line.match(/ssh\s+-p\s+(\d+)\s+(\S+)/);
       if (match) {
@@ -136,12 +151,29 @@ function onEndpointData(text: string, isError: boolean): void {
           timestamp: new Date().toISOString(),
         });
         logLine("Endpoint ready. Waiting for extension to launch Remote-SSH.");
-        startIdleMonitor(port, hostConfig, endpoint.pid, helperPid, logLine, (state) => {
-          writeState(state);
-          safeKill(endpoint.pid);
-          process.exit(0);
+        idleMonitor = startIdleMonitor(port, hostConfig, logLine, (reason) => {
+          shutdown(reason);
         });
       }
     }
   }
+}
+
+function shutdown(reason: string, code = 0): void {
+  if (shuttingDown) {
+    return;
+  }
+  shuttingDown = true;
+  clearTimeout(timeoutTimer);
+  logLine(`Shutting down helper: ${reason}`);
+  writeState({
+    status: "error",
+    message: reason,
+    endpointPid: endpoint.pid,
+    helperPid,
+    timestamp: new Date().toISOString(),
+  });
+  stopCmlSessions(hostConfig.cdswctlPath, hostConfig.project, logLine);
+  safeKill(endpoint.pid);
+  process.exit(code);
 }

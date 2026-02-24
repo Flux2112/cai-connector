@@ -15,21 +15,32 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as path from "path";
 import * as cp from "child_process";
-import { EndpointHostConfig, EndpointState } from "./types";
+import { EndpointHostConfig } from "./types";
 
 const IDLE_POLL_INTERVAL_MS = 30_000;
 
-type IdleShutdownCallback = (state: EndpointState) => void;
+type IdleShutdownCallback = (reason: string) => void;
 
-function hasActiveConnections(port: string): Promise<boolean> {
+function hasActiveConnections(port: string, log: (msg: string) => void): Promise<boolean> {
+  const command = "netstat -an";
+  const portNeedle = `:${port}`;
   return new Promise((resolve) => {
     cp.exec(
-      `netstat -an | findstr :${port} | findstr ESTABLISHED`,
+      command,
       { windowsHide: true },
-      (_err, stdout) => {
-        resolve(typeof stdout === "string" && stdout.trim().length > 0);
+      (err, stdout, stderr) => {
+        const lines = typeof stdout === "string" ? stdout.split(/\r?\n/) : [];
+        const active = lines.some((line) => {
+          const upper = line.toUpperCase();
+          return upper.includes(portNeedle.toUpperCase()) && upper.includes("ESTABLISHED");
+        });
+        const errMsg = err ? `, err=${String(err)}` : "";
+        const stderrMsg = typeof stderr === "string" && stderr.trim().length > 0
+          ? `, stderr=${stderr.trim()}`
+          : "";
+        log(`Idle probe: command='${command}', active=${String(active)}${errMsg}${stderrMsg}`);
+        resolve(active);
       },
     );
   });
@@ -38,15 +49,17 @@ function hasActiveConnections(port: string): Promise<boolean> {
 export function startIdleMonitor(
   port: string,
   config: EndpointHostConfig,
-  endpointPid: number | undefined,
-  helperPid: number,
   log: (msg: string) => void,
   onShutdown: IdleShutdownCallback,
-): void {
+): { markConnectionSeen: () => void } {
   const timeoutMin = config.idleTimeoutMinutes;
   if (!timeoutMin || timeoutMin <= 0) {
     log("Idle monitor disabled (idleTimeoutMinutes = 0).");
-    return;
+    return {
+      markConnectionSeen: () => {
+        // no-op when disabled
+      },
+    };
   }
 
   const threshold = Math.max(1, Math.round((timeoutMin * 60_000) / IDLE_POLL_INTERVAL_MS));
@@ -54,20 +67,30 @@ export function startIdleMonitor(
 
   let firstConnectionSeen = false;
   let consecutiveIdle = 0;
+  let probesWithoutConnection = 0;
+
+  const markConnectionSeen = (): void => {
+    if (!firstConnectionSeen) {
+      firstConnectionSeen = true;
+      consecutiveIdle = 0;
+      log("Connection activity observed from endpoint output; idle counting is now enabled.");
+    }
+  };
 
   const timer = setInterval(async () => {
-    const active = await hasActiveConnections(port);
+    const active = await hasActiveConnections(port, log);
 
     if (active) {
-      if (!firstConnectionSeen) {
-        firstConnectionSeen = true;
-        log("First SSH connection detected.");
-      }
+      markConnectionSeen();
       consecutiveIdle = 0;
       return;
     }
 
     if (!firstConnectionSeen) {
+      probesWithoutConnection++;
+      if (probesWithoutConnection === 1 || probesWithoutConnection % 5 === 0) {
+        log(`No connection detected yet (${probesWithoutConnection} probe(s)); idle timer not counting yet.`);
+      }
       return; // Don't count idle before any connection has been made
     }
 
@@ -77,36 +100,10 @@ export function startIdleMonitor(
     if (consecutiveIdle >= threshold) {
       clearInterval(timer);
       log(`Shutting down after ${timeoutMin} minutes of inactivity.`);
-
-      const state: EndpointState = {
-        status: "error",
-        message: `Shut down after ${timeoutMin} minutes of inactivity.`,
-        endpointPid,
-        helperPid,
-        timestamp: new Date().toISOString(),
-      };
-      onShutdown(state);
-
-      stopCmlSessions(config, log);
+      onShutdown(`Shut down after ${timeoutMin} minutes of inactivity.`);
     }
   }, IDLE_POLL_INTERVAL_MS);
   timer.unref();
-}
 
-function stopCmlSessions(config: EndpointHostConfig, log: (msg: string) => void): void {
-  const project = config.project;
-  if (!project) {
-    return;
-  }
-  try {
-    log(`Stopping CML sessions in project ${project}...`);
-    cp.execFileSync(
-      config.cdswctlPath,
-      ["sessions", "stop", "/p", project, "/a"],
-      { windowsHide: true, timeout: 30_000, cwd: path.dirname(config.cdswctlPath) },
-    );
-    log("CML sessions stopped.");
-  } catch (err) {
-    log(`Failed to stop CML sessions: ${String(err)}`);
-  }
+  return { markConnectionSeen };
 }

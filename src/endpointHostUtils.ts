@@ -16,6 +16,8 @@
  */
 
 import * as fs from "fs";
+import * as path from "path";
+import * as cp from "child_process";
 import { EndpointState } from "./types";
 
 export function writeStateFile(statePath: string, state: EndpointState): void {
@@ -23,7 +25,8 @@ export function writeStateFile(statePath: string, state: EndpointState): void {
 }
 
 export function appendLog(logPath: string, message: string): void {
-  fs.appendFileSync(logPath, message + "\n", "utf8");
+  const stamped = `[${new Date().toISOString()}] ${message}`;
+  fs.appendFileSync(logPath, stamped + "\n", "utf8");
 }
 
 export function readJson<T>(filePath: string): T | null {
@@ -54,5 +57,41 @@ export function safeKill(pid?: number): void {
     process.kill(pid);
   } catch {
     // Ignore
+  }
+}
+
+export function stopCmlSessions(cdswctlPath: string, project: string, log: (msg: string) => void): void {
+  if (!project) {
+    return;
+  }
+  try {
+    const args = ["sessions", "stop", "/p", project, "/a"];
+    log(`Stopping CML sessions in project ${project} with args: ${args.join(" ")}`);
+    const output = cp.execFileSync(
+      cdswctlPath,
+      args,
+      {
+        windowsHide: true,
+        timeout: 30_000,
+        cwd: path.dirname(cdswctlPath),
+        encoding: "utf8",
+        stdio: "pipe",
+      },
+    );
+    if (typeof output === "string" && output.trim().length > 0) {
+      log(`sessions stop output: ${output.trim()}`);
+    }
+    log("CML sessions stopped command completed.");
+  } catch (err) {
+    log(`Failed to stop CML sessions: ${String(err)}`);
+    const maybeErr = err as { stdout?: string | Buffer; stderr?: string | Buffer };
+    const stdout = maybeErr.stdout ? String(maybeErr.stdout).trim() : "";
+    const stderr = maybeErr.stderr ? String(maybeErr.stderr).trim() : "";
+    if (stdout) {
+      log(`sessions stop stdout: ${stdout}`);
+    }
+    if (stderr) {
+      log(`sessions stop stderr: ${stderr}`);
+    }
   }
 }

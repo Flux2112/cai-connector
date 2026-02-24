@@ -108,7 +108,7 @@ export function stopEndpointHost(statePath: string, output?: vscode.OutputChanne
   clearFile(statePath);
 }
 
-export async function killOrphanedHelperProcesses(output: vscode.OutputChannel): Promise<void> {
+export async function killOrphanedHelperProcesses(output: vscode.OutputChannel): Promise<number> {
   try {
     const result = await new Promise<string>((resolve, reject) => {
       cp.exec(
@@ -132,8 +132,42 @@ export async function killOrphanedHelperProcesses(output: vscode.OutputChannel):
         // Already dead
       }
     }
+    return pids.length;
   } catch {
     // PowerShell may fail on some systems; best-effort cleanup
+    return 0;
+  }
+}
+
+export async function killOrphanedEndpointProcesses(output: vscode.OutputChannel): Promise<number> {
+  try {
+    const result = await new Promise<string>((resolve, reject) => {
+      cp.exec(
+        "powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cdswctl.exe' -and $_.CommandLine -like '*ssh-endpoint*' } | Select-Object -ExpandProperty ProcessId\"",
+        { encoding: "utf8", windowsHide: true },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      );
+    });
+
+    const pids = result
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^\d+$/.test(line))
+      .map(Number)
+      .filter((pid) => pid > 0);
+
+    for (const pid of pids) {
+      output.appendLine(`Killing orphaned ssh-endpoint process (PID ${pid})...`);
+      try {
+        process.kill(pid);
+      } catch {
+        // Already dead
+      }
+    }
+    return pids.length;
+  } catch {
+    // PowerShell may fail on some systems; best-effort cleanup
+    return 0;
   }
 }
 
@@ -147,5 +181,7 @@ export async function cleanupExistingEndpoint(statePath: string, output: vscode.
       clearFile(statePath);
     }
   }
-  await killOrphanedHelperProcesses(output);
+  const killedHelpers = await killOrphanedHelperProcesses(output);
+  const killedEndpoints = await killOrphanedEndpointProcesses(output);
+  output.appendLine(`Orphan cleanup complete: ${killedHelpers} helper process(es), ${killedEndpoints} ssh-endpoint process(es).`);
 }
