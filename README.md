@@ -5,9 +5,11 @@ Create Cloudera AI (CML) SSH endpoints from VS Code and connect with Remote-SSH.
 ## Features
 
 - Connect to CML sessions over SSH with a single command.
+- Recreate the last session with one click.
 - Browse available runtimes and cache the list locally.
 - Store API keys securely in VS Code Secret Storage.
 - Manage SSH config entries for a dedicated `Host cml` block.
+- Auto-shutdown idle endpoints after a configurable timeout.
 
 ## Requirements
 
@@ -27,24 +29,28 @@ Create Cloudera AI (CML) SSH endpoints from VS Code and connect with Remote-SSH.
 
 - `CAI Connector: Connect` - Create a new SSH endpoint and connect.
 - `CAI Connector: Disconnect` - Tear down the current endpoint.
+- `CAI Connector: Recreate Last Session` - Reconnect using the previous session configuration.
 - `CAI Connector: Browse Runtimes` - View available runtimes.
-- `CAI Connector: Reset API Key` - Clear the stored API key.
+- `CAI Connector: Clear Cache` - Clear the cached runtime list.
 
 ## Settings
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `caiConnector.cmlUrl` | string | `https://cml.example.com/` | CML base URL. |
+| `caiConnector.cmlUrl` | string | `""` | Cloudera AI (CML) base URL. |
 | `caiConnector.cdswctlPath` | string | `""` | Full path to `cdswctl.exe`. When empty, PATH is used. |
 | `caiConnector.defaultCpus` | number | `2` | Default CPU count. |
 | `caiConnector.defaultMemoryGb` | number | `4` | Default memory (GB). |
+| `caiConnector.defaultGpus` | number | `0` | Default number of GPUs. |
 | `caiConnector.cacheHours` | number | `24` | Runtime cache duration (hours). |
+| `caiConnector.idleTimeoutMinutes` | number | `30` | Minutes of SSH inactivity before auto-shutdown. Set to 0 to disable. |
 
 ## How it works
 
 - The extension spawns a detached helper process that runs `cdswctl ssh-endpoint`.
 - Endpoint state is written to a JSON file under the extension storage directory.
 - When ready, the extension updates your SSH config and opens Remote-SSH.
+- An idle monitor watches for active SSH connections; after a configurable timeout the endpoint and CML sessions are automatically shut down.
 
 ## Troubleshooting
 

@@ -41,12 +41,14 @@ Output goes to `out/` as raw CommonJS. No bundler (webpack, esbuild, etc.) is co
 
 ```
 src/
-├── extension.ts       # Entry point, command registration, cache clearing, endpoint check
+├── extension.ts       # Monolithic entry point (all logic inlined, see tech debt)
 ├── auth.ts            # API key management, CML login, cdswctl resolution
 ├── cdswctl.ts         # CLI wrapper for cdswctl.exe
 ├── connectFlow.ts     # Connect + browse runtimes orchestration
 ├── endpointHost.ts    # Standalone Node.js script (detached process)
+├── endpointHostUtils.ts # Helpers for endpointHost (state file I/O, session stop)
 ├── endpointManager.ts # Endpoint process lifecycle (start, stop, cleanup)
+├── idleMonitor.ts     # SSH idle connection monitoring, auto-shutdown
 ├── reconnectFlow.ts   # Reconnect orchestration (recreate last session)
 ├── runtimeManager.ts  # Runtime fetching/caching
 ├── runtimePicker.ts   # Runtime/addon selection QuickPick UI
@@ -137,12 +139,14 @@ function sleep(ms: number): Promise<void> {
 
 | Module | Responsibility |
 |--------|---------------|
-| `extension.ts` | Entry point — registers commands, delegates to flow modules, cache clearing, endpoint check |
+| `extension.ts` | **Monolithic** entry point — contains all logic inlined (972 lines, see tech debt below) |
 | `auth.ts` | API key prompting/storage, CML URL prompting, login, cdswctl resolution |
 | `cdswctl.ts` | CLI wrapper — locates and runs `cdswctl.exe` |
 | `connectFlow.ts` | `connectFlow` + `browseRuntimesFlow` orchestration |
-| `endpointHost.ts` | Standalone script — runs detached, spawns CLI, writes state |
+| `endpointHost.ts` | Standalone script — runs detached, spawns CLI, writes state, starts idle monitor |
+| `endpointHostUtils.ts` | Shared helpers for `endpointHost.ts` — state file I/O, log appending, session stop |
 | `endpointManager.ts` | Start/stop/cleanup endpoint host processes, orphan detection |
+| `idleMonitor.ts` | Monitors SSH port for active connections via `netstat`, triggers auto-shutdown on idle |
 | `reconnectFlow.ts` | `reconnectFlow` — recreates last session with validation |
 | `runtimeManager.ts` | Fetches/caches runtimes with disk-based TTL |
 | `runtimePicker.ts` | QuickPick UI for runtime and runtime addon selection |
@@ -157,6 +161,7 @@ function sleep(ms: number): Promise<void> {
 - **Detached Helper Process**: `endpointHost.ts` runs as `node out/endpointHost.js <configPath>`, survives VS Code window closes. IPC via polled JSON file (`endpoint_state.json`), not sockets.
 - **State Lifecycle**: `"starting" → "ready" | "error"`
 - **Process Management**: `cp.spawn({ detached: true, stdio: "ignore" })` + `.unref()`. Liveness via `process.kill(pid, 0)`.
+- **Idle Monitoring**: `idleMonitor.ts` polls `netstat` for ESTABLISHED connections on the SSH port. After configurable idle timeout (`caiConnector.idleTimeoutMinutes`, default 30), triggers auto-shutdown of the endpoint and CML sessions.
 - **Lazy Activation**: Extension activates only on command invocation
 - **Empty `deactivate()`**: Intentional — detached process must survive window close
 
@@ -176,7 +181,9 @@ function sleep(ms: number): Promise<void> {
 
 ## Known Technical Debt
 
-`EndpointHostConfig` and `EndpointState` types in `src/endpointHost.ts` are duplicated from `src/types.ts`. When touching `endpointHost.ts`, consider importing from `types.ts` instead.
+- **Monolithic `extension.ts`** (972 lines): Contains all logic inlined — duplicates every function from the extracted modules (`auth.ts`, `connectFlow.ts`, `sessionManager.ts`, `endpointManager.ts`, `runtimePicker.ts`, `state.ts`, `utils.ts`). The extracted modules exist but `extension.ts` does not import from them. The entry point (`package.json` → `./out/extension.js`) runs the monolithic version. Refactoring `extension.ts` to delegate to the extracted modules is the primary tech debt item.
+- **Missing command registration**: `caiConnector.clearCache` is declared in `package.json` but not registered in `extension.ts`. Conversely, `caiConnector.resetApiKey` is registered in `extension.ts` but not declared in `package.json`.
+- **File size violations**: Several modules exceed the 150-line limit — `extension.ts` (972), `endpointHost.ts` (178), `endpointManager.ts` (187), `cdswctl.ts` (157).
 
 ## Integration Points
 
