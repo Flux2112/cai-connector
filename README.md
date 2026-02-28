@@ -71,6 +71,16 @@ npm install
 npm run compile
 ```
 
+## CI/CD
+
+Every push to `main` triggers the GitHub Actions publish workflow, which:
+
+1. Compiles the TypeScript source.
+2. Bumps the minor version and pushes a `[skip ci]` commit + git tag.
+3. Packages the extension as a `.vsix`.
+4. Publishes to the VS Code Marketplace via `vsce` using the `AZURE_PAT` secret.
+5. Uploads the `.vsix` as a GitHub Actions artifact.
+
 ## License
 
 Copyright (C) 2026 Marvin Hanke
