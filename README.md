@@ -1,85 +1,129 @@
 # CAI Connector
 
-Create Cloudera AI (CML) SSH endpoints from VS Code and connect with Remote-SSH. This extension is Windows-only and uses the `cdswctl.exe` CLI.
+Connect to [Cloudera AI (CML)](https://docs.cloudera.com/machine-learning/cloud/index.html) from VS Code over SSH — without leaving your editor.
 
-## Features
+The extension uses `cdswctl` to create a CML SSH endpoint, updates your SSH config automatically, and opens a **Remote-SSH** window into your session. When you are done, it tears the endpoint down cleanly.
 
-- Connect to CML sessions over SSH with a single command.
-- Recreate the last session with one click.
-- Browse available runtimes and cache the list locally.
-- Store API keys securely in VS Code Secret Storage.
-- Manage SSH config entries for a dedicated `Host cml` block.
-- Auto-shutdown idle endpoints after a configurable timeout.
+---
 
 ## Requirements
 
-- Windows 10 or later.
-- VS Code with the Remote-SSH extension installed.
-- `cdswctl.exe` available on your PATH or configured via settings.
-- A CML API key with permission to create SSH endpoints.
+- **Windows 10 or later** (the extension uses `cdswctl.exe`)
+- **VS Code 1.85.0** or later
+- The **[Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh)** extension installed
+- `cdswctl.exe` — available on your PATH, or configured via `caiConnector.cdswctlPath`
+- A CML API key with permission to create SSH endpoints
 
-## Quick start
+---
+
+## Quick Start
 
 1. Install the extension.
-2. Ensure `cdswctl.exe` is on your PATH, or set `caiConnector.cdswctlPath`.
-3. Run `CAI Connector: Connect` and follow the prompts for CML URL and API key.
-4. VS Code opens a new Remote-SSH window when the endpoint is ready.
+2. Make sure `cdswctl.exe` is on your PATH, or set **`caiConnector.cdswctlPath`** to its full path.
+3. Open the Command Palette (`Ctrl+Shift+P`) and run **`CAI Connector: Connect`**.
+4. Enter your **CML URL** and **API key** when prompted (stored securely — you only need to do this once).
+5. Choose a **runtime**, **CPU**, **memory**, and **GPU** allocation.
+6. Wait for the endpoint to become ready — VS Code opens a new Remote-SSH window automatically.
+
+---
 
 ## Commands
 
-- `CAI Connector: Connect` - Create a new SSH endpoint and connect.
-- `CAI Connector: Disconnect` - Tear down the current endpoint.
-- `CAI Connector: Recreate Last Session` - Reconnect using the previous session configuration.
-- `CAI Connector: Browse Runtimes` - View available runtimes.
-- `CAI Connector: Clear Cache` - Clear the cached runtime list.
+All commands are available via the Command Palette (`Ctrl+Shift+P`).
 
-## Settings
+| Command | Description |
+|---|---|
+| `CAI Connector: Connect` | Create a new CML SSH endpoint and open it in Remote-SSH. Prompts for runtime and resource allocation. |
+| `CAI Connector: Disconnect` | Tear down the current endpoint and clean up the SSH config entry. |
+| `CAI Connector: Recreate Last Session` | Reconnect instantly using the same runtime and resource settings as your previous session. |
+| `CAI Connector: Browse Runtimes` | View the list of available CML runtimes (cached locally for speed). |
+| `CAI Connector: Clear Cache` | Clear the locally cached runtime list and fetch a fresh copy on next connect. |
+
+---
+
+## Configuration
+
+Open settings with `Ctrl+,` and search for `caiConnector`, or add them to `settings.json` directly.
+
+### Connection
 
 | Setting | Type | Default | Description |
-| --- | --- | --- | --- |
-| `caiConnector.cmlUrl` | string | `""` | Cloudera AI (CML) base URL. |
-| `caiConnector.cdswctlPath` | string | `""` | Full path to `cdswctl.exe`. When empty, PATH is used. |
-| `caiConnector.defaultCpus` | number | `2` | Default CPU count. |
-| `caiConnector.defaultMemoryGb` | number | `4` | Default memory (GB). |
-| `caiConnector.defaultGpus` | number | `0` | Default number of GPUs. |
-| `caiConnector.cacheHours` | number | `24` | Runtime cache duration (hours). |
-| `caiConnector.idleTimeoutMinutes` | number | `30` | Minutes of SSH inactivity before auto-shutdown. Set to 0 to disable. |
+|---|---|---|---|
+| `caiConnector.cmlUrl` | `string` | `""` | Base URL of your Cloudera AI (CML) workspace, e.g. `https://ml-abc123.my-company.com`. |
+| `caiConnector.cdswctlPath` | `string` | `""` | Full path to `cdswctl.exe`. Leave empty to use the one on your PATH. |
 
-## How it works
+### Resource Defaults
 
-- The extension spawns a detached helper process that runs `cdswctl ssh-endpoint`.
-- Endpoint state is written to a JSON file under the extension storage directory.
-- When ready, the extension updates your SSH config and opens Remote-SSH.
-- An idle monitor watches for active SSH connections; after a configurable timeout the endpoint and CML sessions are automatically shut down.
+These values pre-fill the resource picker when you run **Connect** or **Recreate Last Session**. You can always override them at connection time.
 
-## Troubleshooting
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `caiConnector.defaultCpus` | `number` | `2` | Default number of vCPUs for new sessions. |
+| `caiConnector.defaultMemoryGb` | `number` | `4` | Default memory allocation in GB. |
+| `caiConnector.defaultGpus` | `number` | `0` | Default number of GPUs. Set to `0` for CPU-only sessions. |
 
-- **`cdswctl.exe` not found**: Set `caiConnector.cdswctlPath` or add it to PATH.
-- **Endpoint stuck in starting**: Check the Output channel: `View > Output > CAI Connector`.
-- **Auth errors**: Run `CAI Connector: Reset API Key` and re-enter your key.
+### Runtime Cache
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `caiConnector.cacheHours` | `number` | `24` | How long (in hours) the runtime list is cached locally before being refreshed. |
+
+### Idle Shutdown
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `caiConnector.idleTimeoutMinutes` | `number` | `30` | Minutes of SSH inactivity before the endpoint is shut down automatically. Set to `0` to disable. |
+
+### Example `settings.json`
+
+```json
+{
+  "caiConnector.cmlUrl": "https://ml-abc123.my-company.com",
+  "caiConnector.defaultCpus": 4,
+  "caiConnector.defaultMemoryGb": 8,
+  "caiConnector.defaultGpus": 0,
+  "caiConnector.idleTimeoutMinutes": 60
+}
+```
+
+---
+
+## How It Works
+
+1. **Connect** — the extension spawns `cdswctl ssh-endpoint` as a background process and monitors its output for readiness.
+2. **SSH config** — once the endpoint is ready, the extension writes a `Host cml` block to your SSH config so Remote-SSH can connect without any manual setup.
+3. **Remote-SSH window** — VS Code opens a new window connected to `cml` over SSH. You can edit files, run terminals, and use any VS Code extension as if you were on the machine.
+4. **Idle monitor** — a background watcher checks for active SSH connections. After the configured idle timeout with no active connections, the endpoint and its CML session are shut down to conserve resources.
+5. **Disconnect** — tears down the endpoint process, removes the SSH config entry, and cleans up state.
+
+---
 
 ## Security
 
-- API keys are stored using VS Code Secret Storage.
-- Endpoint state and temporary config are stored in your user profile storage folder.
-- The extension does not log or persist raw API keys.
+- **API keys** are stored using VS Code's built-in [Secret Storage](https://code.visualstudio.com/api/references/vscode-api#SecretStorage) — never written to `settings.json` or any plain-text file.
+- Endpoint state is stored in your VS Code user profile storage folder (not your workspace).
+- The extension does not log or transmit your API key.
 
-## Development
+---
 
-```bash
-npm install
-npm run compile
-```
+## Troubleshooting
 
-## CI/CD
+**`cdswctl.exe` not found**
+Set `caiConnector.cdswctlPath` to the full path of `cdswctl.exe`, or add its directory to your system PATH and restart VS Code.
 
-Every push to `main` triggers the GitHub Actions publish workflow, which:
+**Endpoint stuck in "starting"**
+Open the Output channel (`View > Output`, select **CAI Connector**) to see live logs from `cdswctl`. Common causes: insufficient cluster capacity, an expired API key, or network connectivity issues between VS Code and your CML workspace.
 
-1. Compiles the TypeScript source.
-2. Bumps the minor version and pushes a `[skip ci]` commit + git tag.
-3. Packages the extension as a `.vsix`.
-4. Publishes to the VS Code Marketplace via `vsce` using the `AZURE_PAT` secret.
-5. Uploads the `.vsix` as a GitHub Actions artifact.
+**Authentication errors / API key rejected**
+Run `CAI Connector: Connect` again — you will be prompted to re-enter your API key. The old key is replaced in Secret Storage automatically.
+
+**Remote-SSH window does not open**
+Ensure the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension is installed and enabled. Check that `ssh` is on your PATH (open a terminal and run `ssh -V`).
+
+**Runtimes list is stale or empty**
+Run `CAI Connector: Clear Cache`, then `CAI Connector: Browse Runtimes` to fetch a fresh list from CML.
+
+---
 
 ## License
 
