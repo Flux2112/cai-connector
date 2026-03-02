@@ -79,6 +79,7 @@ export type EndpointState = {
   sshCommand?: string;
   userAndHost?: string;
   port?: string;
+  sessionId?: string;
   endpointPid?: number;
   helperPid?: number;
   timestamp: string;

@@ -61,6 +61,7 @@ const endpoint = cp.spawn(hostConfig.cdswctlPath, hostConfig.args, {
 });
 
 let endpointReady = false;
+let sessionId: string | undefined;
 let idleMonitor: { markConnectionSeen: () => void } | null = null;
 let shuttingDown = false;
 
@@ -134,6 +135,13 @@ function onEndpointData(text: string, isError: boolean): void {
     if (/Handling connection on port/i.test(line)) {
       idleMonitor?.markConnectionSeen();
     }
+    if (!sessionId) {
+      const sessionMatch = line.match(/on session\s+(\S+)\s+in project/i);
+      if (sessionMatch) {
+        sessionId = sessionMatch[1];
+        logLine(`Captured CML session ID: ${sessionId}`);
+      }
+    }
     if (!endpointReady) {
       const match = line.match(/ssh\s+-p\s+(\d+)\s+(\S+)/);
       if (match) {
@@ -146,6 +154,7 @@ function onEndpointData(text: string, isError: boolean): void {
           sshCommand,
           userAndHost,
           port,
+          sessionId,
           endpointPid: endpoint.pid,
           helperPid,
           timestamp: new Date().toISOString(),
@@ -173,7 +182,7 @@ function shutdown(reason: string, code = 0): void {
     helperPid,
     timestamp: new Date().toISOString(),
   });
-  stopCmlSessions(hostConfig.cdswctlPath, hostConfig.project, logLine);
+  stopCmlSessions(hostConfig.cdswctlPath, hostConfig.project, logLine, sessionId);
   safeKill(endpoint.pid);
   process.exit(code);
 }

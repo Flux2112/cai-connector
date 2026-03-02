@@ -21,7 +21,7 @@ import { resolveAndLogin } from "./auth";
 import { startEndpointHost, waitForEndpointReady, stopEndpointHost } from "./endpointManager";
 import { getActiveProject, setActiveProject } from "./state";
 import { updateSshConfig } from "./sshConfig";
-import { buildEndpointArgs, clearFile, getStoragePath } from "./utils";
+import { buildEndpointArgs, clearFile, getStoragePath, readState } from "./utils";
 import {
   CDSWCTL_TIMEOUT_MS, ConnectParams,
   ENDPOINT_READY_TIMEOUT_MS,
@@ -123,18 +123,38 @@ export async function disconnectFlow(context: vscode.ExtensionContext, output: v
   output.show(true);
   const statePath = getStoragePath(context, STATE_FILE);
 
+  // Read session ID from state before stopping the endpoint host (which clears the file)
+  const currentState = readState(statePath, output);
+  const sessionId = currentState?.sessionId;
+
   output.appendLine("Stopping ssh-endpoint process...");
   stopEndpointHost(statePath, output);
 
-  // Also stop CML sessions if we know the project
+  // Stop only the CML session created by this extension — never stop all sessions
   const activeProject = getActiveProject();
   if (activeProject) {
-    output.appendLine(`Stopping sessions in project ${activeProject}...`);
-    const cdswctlPath = await resolveAndLogin(context, output);
-    if (cdswctlPath) {
-      await runCdswctl(cdswctlPath, ["sessions", "stop", "/p", activeProject, "/a"], output, CDSWCTL_TIMEOUT_MS);
+    if (sessionId) {
+      output.appendLine(`Stopping session ${sessionId} in project ${activeProject}...`);
+      const cdswctlPath = await resolveAndLogin(context, output);
+      if (cdswctlPath) {
+        const result = await runCdswctl(
+          cdswctlPath,
+          ["sessions", "stop", "/s", sessionId, "/p", activeProject],
+          output,
+          CDSWCTL_TIMEOUT_MS,
+        );
+        // Per-session stop (/s) has a known cdswctl bug: "unexpected end of JSON input" despite success
+        if (result.exitCode !== 0) {
+          const combined = result.stdout + result.stderr;
+          if (/unexpected end of JSON/i.test(combined)) {
+            output.appendLine("Session stop returned known cdswctl bug message (session likely stopped successfully).");
+          }
+        }
+      } else {
+        output.appendLine("Skipping remote session cleanup — login failed.");
+      }
     } else {
-      output.appendLine("Skipping remote session cleanup — login failed.");
+      output.appendLine("No session ID available — skipping session cleanup to avoid stopping unrelated sessions.");
     }
     setActiveProject(null);
   }
