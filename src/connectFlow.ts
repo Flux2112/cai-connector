@@ -20,9 +20,9 @@ import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
 import { cleanupExistingEndpoint } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
-import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon } from "./runtimePicker";
+import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon, filterLatestRuntimes } from "./runtimePicker";
 import { executeConnect } from "./sessionManager";
-import { saveLastSession, setActiveProject } from "./state";
+import { loadLastSession, saveLastSession, setActiveProject } from "./state";
 import { CACHE_FILE, STATE_FILE } from "./types";
 import { getStoragePath, promptResources } from "./utils";
 
@@ -39,6 +39,7 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
   const defaultMemoryGb = config.get<number>("defaultMemoryGb", 4);
   const defaultGpus = config.get<number>("defaultGpus", 0);
   const cacheHours = config.get<number>("cacheHours", 24);
+  const latestRuntimesOnly = config.get<boolean>("latestRuntimesOnly", true);
 
   const cachePath = getStoragePath(context, CACHE_FILE);
   const statePath = getStoragePath(context, STATE_FILE);
@@ -66,7 +67,8 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
     return;
   }
 
-  const runtime = await pickRuntime(runtimeManager.getAll());
+  const runtimeList = latestRuntimesOnly ? filterLatestRuntimes(runtimeManager.getAll()) : runtimeManager.getAll();
+  const runtime = await pickRuntime(runtimeList);
   if (!runtime) {
     return;
   }
@@ -91,7 +93,12 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
 
   output.appendLine(`Connecting to project ${project}...`);
 
-  const connected = await executeConnect(context, output, {
+  // Auto-stop only the known extension-owned session for this project, if any
+  const lastSession = loadLastSession(context);
+  const autoStopSessions =
+    lastSession?.projectName === project && lastSession.sessionId ? lastSession.sessionId : false;
+
+  const sessionId = await executeConnect(context, output, {
     project,
     runtimeId: runtime.id,
     addonId: addon?.id ?? null,
@@ -99,10 +106,10 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
     memory: resources.memoryGb,
     gpus: resources.gpus,
     cdswctlPath,
-    autoStopSessions: "prompt",
+    autoStopSessions,
   });
 
-  if (connected) {
+  if (sessionId !== false) {
     saveLastSession(context, {
       projectName: project,
       runtimeId: runtime.id,
@@ -110,6 +117,7 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
       cpus: resources.cpus,
       memoryGb: resources.memoryGb,
       gpus: resources.gpus,
+      sessionId: sessionId || undefined,
       timestamp: new Date().toISOString(),
     });
   }
@@ -118,6 +126,7 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
 export async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
   const config = vscode.workspace.getConfiguration("caiConnector");
   const cacheHours = config.get<number>("cacheHours", 24);
+  const latestRuntimesOnly = config.get<boolean>("latestRuntimesOnly", true);
   const cachePath = getStoragePath(context, CACHE_FILE);
 
   const cdswctlPath = await resolveAndLogin(context, output);
@@ -132,5 +141,6 @@ export async function browseRuntimesFlow(context: vscode.ExtensionContext, outpu
     return;
   }
 
-  await pickRuntime(runtimeManager.getAll());
+  const runtimeList = latestRuntimesOnly ? filterLatestRuntimes(runtimeManager.getAll()) : runtimeManager.getAll();
+  await pickRuntime(runtimeList);
 }

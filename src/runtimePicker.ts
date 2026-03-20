@@ -20,6 +20,18 @@ import { runCdswctl } from "./cdswctl";
 import { CDSWCTL_TIMEOUT_MS, RuntimeAddonData, RuntimeData } from "./types";
 import { multiTermFilter } from "./utils";
 
+export function filterLatestRuntimes(runtimes: RuntimeData[]): RuntimeData[] {
+  const latest = new Map<string, RuntimeData>();
+  for (const r of runtimes) {
+    const key = `${r.editor}|${r.kernel}|${r.edition}`;
+    const existing = latest.get(key);
+    if (!existing || r.id > existing.id) {
+      latest.set(key, r);
+    }
+  }
+  return Array.from(latest.values());
+}
+
 export async function pickRuntime(runtimes: RuntimeData[]): Promise<RuntimeData | null> {
   const allItems: vscode.QuickPickItem[] = runtimes.map((r) => ({
     label: `[${r.id}] ${r.editor} - ${r.kernel} (${r.edition})`,
@@ -97,8 +109,9 @@ export async function fetchRuntimeAddons(
  * Returns the selected addon, `null` for "None", or `undefined` if the user dismissed.
  */
 export async function pickRuntimeAddon(addons: RuntimeAddonData[]): Promise<RuntimeAddonData | null | undefined> {
+  const sorted = [...addons].sort((a, b) => b.id - a.id);
   const noneItem: vscode.QuickPickItem = { label: "None", description: "No runtime addon" };
-  const addonItems: vscode.QuickPickItem[] = addons.map((a) => ({
+  const addonItems: vscode.QuickPickItem[] = sorted.map((a) => ({
     label: `[${a.id}] ${a.displayName}`,
     description: a.component,
   }));

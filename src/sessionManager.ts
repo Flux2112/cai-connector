@@ -32,34 +32,15 @@ export async function executeConnect(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   params: ConnectParams,
-): Promise<boolean> {
+): Promise<string | false> {
   const statePath = getStoragePath(context, STATE_FILE);
   const logPath = getStoragePath(context, LOG_FILE);
 
-  // Handle stop-sessions
-  if (params.autoStopSessions === true) {
-    output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
-  } else if (params.autoStopSessions === "prompt") {
-    const stopSessions = await vscode.window.showQuickPick(
-      [
-        { label: "No", description: "Keep existing sessions running", picked: true },
-        { label: "Yes", description: "Stop all existing sessions in this project" },
-      ],
-      {
-        title: "Stop Existing Sessions?",
-        placeHolder: `Stop all running sessions in ${params.project}?`,
-      },
-    );
-    if (!stopSessions) {
-      return false;
-    }
-    if (stopSessions.label === "Yes") {
-      output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-      await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
-    } else {
-      output.appendLine("Skipping session cleanup.");
-    }
+  // Handle stop-sessions: only stop the known extension-owned session, if one is provided
+  if (params.autoStopSessions !== false) {
+    const prevSessionId = params.autoStopSessions;
+    output.appendLine(`Stopping previous extension session ${prevSessionId} in project ${params.project}...`);
+    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/s", prevSessionId, "/p", params.project], output, CDSWCTL_TIMEOUT_MS);
   }
 
   output.appendLine("Creating SSH endpoint...");
@@ -84,7 +65,7 @@ export async function executeConnect(
 
   if (!helperPid) {
     vscode.window.showErrorMessage("Failed to start endpoint host.");
-    return false;
+    return false as false;
   }
 
   let state = null;
@@ -93,13 +74,13 @@ export async function executeConnect(
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to establish SSH endpoint: ${String(err)}`);
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   if (!state || !state.port || !state.userAndHost) {
     vscode.window.showErrorMessage("Failed to parse SSH endpoint output.");
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   output.appendLine(`SSH: ${state.userAndHost}:${state.port}`);
@@ -107,7 +88,7 @@ export async function executeConnect(
   if (!updateSshConfig(state.port)) {
     vscode.window.showErrorMessage("Failed to update SSH config.");
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   output.appendLine("SSH config updated. Opening Remote-SSH window...");
@@ -116,7 +97,7 @@ export async function executeConnect(
   await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true });
 
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
-  return true;
+  return state.sessionId ?? "";
 }
 
 export async function disconnectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {

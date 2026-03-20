@@ -18,11 +18,65 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cai-connector-sidebar",
+          "title": "CAI Connector",
+          "icon": "$(server)"
+        }
+      ]
+    },
+    "views": {
+      "cai-connector-sidebar": [
+        {
+          "id": "caiConnector.sessionsView",
+          "name": "Sessions"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "caiConnector.connect",
+          "when": "view == caiConnector.sessionsView",
+          "group": "navigation"
+        },
+        {
+          "command": "caiConnector.refreshSessions",
+          "when": "view == caiConnector.sessionsView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "caiConnector.joinSession",
+          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "group": "inline"
+        },
+        {
+          "command": "caiConnector.recreateSession",
+          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "group": "inline"
+        },
+        {
+          "command": "caiConnector.recreateSession",
+          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
+          "group": "inline"
+        },
+        {
+          "command": "caiConnector.killSession",
+          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "group": "inline"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "caiConnector.connect",
         "title": "Connect",
-        "category": "CAI Connector"
+        "category": "CAI Connector",
+        "icon": "$(add)"
       },
       {
         "command": "caiConnector.disconnect",
@@ -43,6 +97,30 @@
         "command": "caiConnector.reconnect",
         "title": "Recreate Last Session",
         "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.refreshSessions",
+        "title": "Refresh Sessions",
+        "category": "CAI Connector",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "caiConnector.joinSession",
+        "title": "Join Session",
+        "category": "CAI Connector",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "caiConnector.recreateSession",
+        "title": "Recreate Session",
+        "category": "CAI Connector",
+        "icon": "$(debug-rerun)"
+      },
+      {
+        "command": "caiConnector.killSession",
+        "title": "Kill Session",
+        "category": "CAI Connector",
+        "icon": "$(debug-stop)"
       }
     ],
     "configuration": {
@@ -87,6 +165,11 @@
           "default": 30,
           "minimum": 0,
           "description": "Minutes of SSH inactivity before the endpoint auto-shuts down. Set to 0 to disable idle shutdown."
+        },
+        "caiConnector.latestRuntimesOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, only the latest version of each runtime (grouped by editor, kernel, and edition) is shown in the runtime picker."
         }
       }
     }

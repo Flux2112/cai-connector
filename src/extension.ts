@@ -24,6 +24,9 @@ import { ensureCdswctl, runCdswctl } from "./cdswctl";
 import { RuntimeManager } from "./runtimeManager";
 import { updateSshConfig } from "./sshConfig";
 import { ConnectParams, EndpointHostConfig, EndpointState, LastSessionConfig, ResourceInput, RuntimeAddonData, RuntimeData } from "./types";
+import { SessionPanel, SessionItem } from "./sessionPanel";
+import { killSessionRecord } from "./sessionKill";
+import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 
 const SECRET_KEY = "CML_API_KEY";
 const STATE_FILE = "endpoint_state.json";
@@ -67,6 +70,41 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("caiConnector.reconnect", async () => {
       await reconnectFlow(context, output);
+    })
+  );
+
+  // Sidebar sessions panel
+  const panel = new SessionPanel(context.globalStorageUri.fsPath);
+  const treeView = vscode.window.createTreeView("caiConnector.sessionsView", {
+    treeDataProvider: panel,
+    showCollapseAll: true,
+  });
+  panel.start();
+  context.subscriptions.push(treeView, { dispose: () => panel.dispose() });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.refreshSessions", () => {
+      panel.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.killSession", async (item: SessionItem) => {
+      output.show(true);
+      await killSessionRecord(item.record, context, output);
+      panel.refresh();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.joinSession", async (item: SessionItem) => {
+      await joinSessionFlow(item, context, output);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.recreateSession", async (item: SessionItem) => {
+      await recreateSessionFlow(item, context, output, panel);
     })
   );
 
@@ -144,7 +182,12 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
 
   output.appendLine(`Connecting to project ${project}...`);
 
-  const connected = await executeConnect(context, output, {
+  // Auto-stop only the known extension-owned session for this project, if any
+  const priorSession = loadLastSession(context);
+  const autoStopSessions =
+    priorSession?.projectName === project && priorSession.sessionId ? priorSession.sessionId : false;
+
+  const sessionId = await executeConnect(context, output, {
     project,
     runtimeId: runtime.id,
     addonId: addon?.id ?? null,
@@ -152,10 +195,10 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
     memory: resources.memoryGb,
     gpus: resources.gpus,
     cdswctlPath,
-    autoStopSessions: "prompt",
+    autoStopSessions,
   });
 
-  if (connected) {
+  if (sessionId !== false) {
     saveLastSession(context, {
       projectName: project,
       runtimeId: runtime.id,
@@ -163,6 +206,7 @@ async function connectFlow(context: vscode.ExtensionContext, output: vscode.Outp
       cpus: resources.cpus,
       memoryGb: resources.memoryGb,
       gpus: resources.gpus,
+      sessionId: sessionId || undefined,
       timestamp: new Date().toISOString(),
     });
   }
@@ -172,13 +216,13 @@ async function executeConnect(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   params: ConnectParams,
-): Promise<boolean> {
+): Promise<string | false> {
   const statePath = getStoragePath(context, STATE_FILE);
   const logPath = getStoragePath(context, LOG_FILE);
 
   const shouldContinue = await handleStopSessions(params, output);
   if (!shouldContinue) {
-    return false;
+    return false as false;
   }
 
   output.appendLine("Creating SSH endpoint...");
@@ -201,7 +245,7 @@ async function executeConnect(
 
   if (!helperPid) {
     vscode.window.showErrorMessage("Failed to start endpoint host.");
-    return false;
+    return false as false;
   }
 
   let state: EndpointState | null = null;
@@ -210,13 +254,13 @@ async function executeConnect(
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to establish SSH endpoint: ${String(err)}`);
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   if (!state || !state.port || !state.userAndHost) {
     vscode.window.showErrorMessage("Failed to parse SSH endpoint output.");
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   output.appendLine(`SSH: ${state.userAndHost}:${state.port}`);
@@ -224,7 +268,7 @@ async function executeConnect(
   if (!updateSshConfig(state.port)) {
     vscode.window.showErrorMessage("Failed to update SSH config.");
     await disconnectFlow(context, output);
-    return false;
+    return false as false;
   }
 
   output.appendLine("SSH config updated. Opening Remote-SSH window...");
@@ -233,7 +277,7 @@ async function executeConnect(
   await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true });
 
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
-  return true;
+  return state.sessionId ?? "";
 }
 
 async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
@@ -303,35 +347,15 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     }
   }
 
-  // Build confirmation message
-  const runtimeLabel = savedRuntime
-    ? `${savedRuntime.editor} - ${savedRuntime.kernel} (${savedRuntime.edition})`
-    : `Runtime ${runtimeId}`;
-  const addonLabel = addonId !== null ? `, Addon ${addonId}` : "";
-  const confirm = await vscode.window.showQuickPick(
-    [
-      { label: "Yes", description: "Recreate this session" },
-      { label: "No", description: "Cancel" },
-    ],
-    {
-      title: "Recreate Last Session?",
-      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB, ${lastSession.gpus ?? 0} GPU${addonLabel}`,
-    },
-  );
-  if (!confirm || confirm.label !== "Yes") {
-    return;
-  }
-
   const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
   activeProject = lastSession.projectName;
 
   output.appendLine(`Reconnecting to project ${lastSession.projectName}...`);
 
-  // Determine stop-sessions behavior based on project ownership
-  const projectOwner = lastSession.projectName.split("/")[0].toLowerCase();
-  const autoStopSessions: boolean | "prompt" = projectOwner === username ? true : "prompt";
+  // Only stop the specific previous session opened by this extension, never all sessions
+  const autoStopSessions = lastSession.sessionId ?? false;
 
-  const connected = await executeConnect(context, output, {
+  const sessionId = await executeConnect(context, output, {
     project: lastSession.projectName,
     runtimeId,
     addonId,
@@ -342,7 +366,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
     autoStopSessions,
   });
 
-  if (connected) {
+  if (sessionId !== false) {
     saveLastSession(context, {
       projectName: lastSession.projectName,
       runtimeId,
@@ -350,6 +374,7 @@ async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.Ou
       cpus: lastSession.cpus,
       memoryGb: lastSession.memoryGb,
       gpus: lastSession.gpus ?? 0,
+      sessionId: sessionId || undefined,
       timestamp: new Date().toISOString(),
     });
   }
@@ -927,29 +952,11 @@ function checkActiveEndpoint(context: vscode.ExtensionContext, output: vscode.Ou
 }
 
 async function handleStopSessions(params: ConnectParams, output: vscode.OutputChannel): Promise<boolean> {
-  if (params.autoStopSessions === true) {
-    output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
-  } else if (params.autoStopSessions === "prompt") {
-    const stopSessions = await vscode.window.showQuickPick(
-      [
-        { label: "No", description: "Keep existing sessions running", picked: true },
-        { label: "Yes", description: "Stop all existing sessions in this project" },
-      ],
-      {
-        title: "Stop Existing Sessions?",
-        placeHolder: `Stop all running sessions in ${params.project}?`,
-      },
-    );
-    if (!stopSessions) {
-      return false;
-    }
-    if (stopSessions.label === "Yes") {
-      output.appendLine(`Stopping existing SSH sessions in project ${params.project}...`);
-      await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/p", params.project, "/a"], output, CDSWCTL_TIMEOUT_MS);
-    } else {
-      output.appendLine("Skipping session cleanup.");
-    }
+  // Only stop the known extension-owned session, if one is provided
+  if (params.autoStopSessions !== false) {
+    const prevSessionId = params.autoStopSessions;
+    output.appendLine(`Stopping previous extension session ${prevSessionId} in project ${params.project}...`);
+    await runCdswctl(params.cdswctlPath, ["sessions", "stop", "/s", prevSessionId, "/p", params.project], output, CDSWCTL_TIMEOUT_MS);
   }
   return true;
 }

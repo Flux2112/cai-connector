@@ -15,7 +15,6 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as os from "os";
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
 import { cleanupExistingEndpoint } from "./endpointManager";
@@ -93,35 +92,14 @@ export async function reconnectFlow(context: vscode.ExtensionContext, output: vs
     }
   }
 
-  // Build confirmation message
-  const runtimeLabel = savedRuntime
-    ? `${savedRuntime.editor} - ${savedRuntime.kernel} (${savedRuntime.edition})`
-    : `Runtime ${runtimeId}`;
-  const addonLabel = addonId !== null ? `, Addon ${addonId}` : "";
-  const confirm = await vscode.window.showQuickPick(
-    [
-      { label: "Yes", description: "Recreate this session" },
-      { label: "No", description: "Cancel" },
-    ],
-    {
-      title: "Recreate Last Session?",
-      placeHolder: `${lastSession.projectName} — ${runtimeLabel}, ${lastSession.cpus} CPU, ${lastSession.memoryGb} GB, ${lastSession.gpus ?? 0} GPU${addonLabel}`,
-    },
-  );
-  if (!confirm || confirm.label !== "Yes") {
-    return;
-  }
-
-  const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
   setActiveProject(lastSession.projectName);
 
   output.appendLine(`Reconnecting to project ${lastSession.projectName}...`);
 
-  // Determine stop-sessions behavior based on project ownership
-  const projectOwner = lastSession.projectName.split("/")[0].toLowerCase();
-  const autoStopSessions: boolean | "prompt" = projectOwner === username ? true : "prompt";
+  // Only stop the specific previous session opened by this extension, never all sessions
+  const autoStopSessions = lastSession.sessionId ?? false;
 
-  const connected = await executeConnect(context, output, {
+  const sessionId = await executeConnect(context, output, {
     project: lastSession.projectName,
     runtimeId,
     addonId,
@@ -132,7 +110,7 @@ export async function reconnectFlow(context: vscode.ExtensionContext, output: vs
     autoStopSessions,
   });
 
-  if (connected) {
+  if (sessionId !== false) {
     saveLastSession(context, {
       projectName: lastSession.projectName,
       runtimeId,
@@ -140,6 +118,7 @@ export async function reconnectFlow(context: vscode.ExtensionContext, output: vs
       cpus: lastSession.cpus,
       memoryGb: lastSession.memoryGb,
       gpus: lastSession.gpus ?? 0,
+      sessionId: sessionId || undefined,
       timestamp: new Date().toISOString(),
     });
   }

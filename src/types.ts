@@ -44,6 +44,7 @@ export type LastSessionConfig = {
   cpus: number;
   memoryGb: number;
   gpus: number;
+  sessionId?: string;
   timestamp: string;
 };
 
@@ -55,7 +56,8 @@ export type ConnectParams = {
   memory: number;
   gpus: number;
   cdswctlPath: string;
-  autoStopSessions: boolean | "prompt";
+  // string = specific CML session ID to stop (extension-owned); false = skip
+  autoStopSessions: string | false;
 };
 
 export type ResourceInput = {
@@ -85,9 +87,27 @@ export type EndpointState = {
   timestamp: string;
 };
 
+export type SessionRecord = {
+  id: string;
+  projectName: string;
+  runtimeId: number;
+  addonId: number | null;
+  cpus: number;
+  memoryGb: number;
+  gpus: number;
+  status: "active" | "inactive" | "error";
+  port?: string;
+  sessionId?: string;
+  helperPid?: number;
+  endpointPid?: number;
+  startedAt: string;
+};
+
 // Shared constants
 export const SECRET_KEY = "CML_API_KEY";
 export const STATE_FILE = "endpoint_state.json";
+export const HISTORY_FILE = "session_history.json";
+export const HOST_CONFIG_FILE = "endpoint_host_config.json";
 export const LOG_FILE = "endpoint_host.log";
 export const CACHE_FILE = "runtimes_cache.json";
 export const SESSION_FILE = "last_session.json";

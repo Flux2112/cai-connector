@@ -62,18 +62,19 @@ export function startIdleMonitor(
     };
   }
 
-  const threshold = Math.max(1, Math.round((timeoutMin * 60_000) / IDLE_POLL_INTERVAL_MS));
-  log(`Idle monitor started (timeout: ${timeoutMin}m, threshold: ${threshold} polls).`);
+  const idleTimeoutMs = timeoutMin * 60_000;
+  log(`Idle monitor started (timeout: ${timeoutMin}m).`);
 
-  let firstConnectionSeen = false;
-  let consecutiveIdle = 0;
+  let lastConnectionTime = 0;
   let probesWithoutConnection = 0;
+  let lastLoggedIdleMin = -1;
 
   const markConnectionSeen = (): void => {
-    if (!firstConnectionSeen) {
-      firstConnectionSeen = true;
-      consecutiveIdle = 0;
-      log("Connection activity observed from endpoint output; idle counting is now enabled.");
+    const wasConnected = lastConnectionTime !== 0;
+    lastConnectionTime = Date.now();
+    lastLoggedIdleMin = -1;
+    if (!wasConnected) {
+      log("Connection activity observed; idle timer started.");
     }
   };
 
@@ -82,11 +83,10 @@ export function startIdleMonitor(
 
     if (active) {
       markConnectionSeen();
-      consecutiveIdle = 0;
       return;
     }
 
-    if (!firstConnectionSeen) {
+    if (lastConnectionTime === 0) {
       probesWithoutConnection++;
       if (probesWithoutConnection === 1 || probesWithoutConnection % 5 === 0) {
         log(`No connection detected yet (${probesWithoutConnection} probe(s)); idle timer not counting yet.`);
@@ -94,10 +94,14 @@ export function startIdleMonitor(
       return; // Don't count idle before any connection has been made
     }
 
-    consecutiveIdle++;
-    log(`No active connections (idle ${consecutiveIdle}/${threshold}).`);
+    const idleMs = Date.now() - lastConnectionTime;
+    const idleMin = Math.floor(idleMs / 60_000);
+    if (idleMin !== lastLoggedIdleMin) {
+      lastLoggedIdleMin = idleMin;
+      log(`No active connections (idle ${idleMin}/${timeoutMin} min).`);
+    }
 
-    if (consecutiveIdle >= threshold) {
+    if (idleMs >= idleTimeoutMs) {
       clearInterval(timer);
       log(`Shutting down after ${timeoutMin} minutes of inactivity.`);
       onShutdown(`Shut down after ${timeoutMin} minutes of inactivity.`);
