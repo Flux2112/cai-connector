@@ -96,6 +96,9 @@ These values pre-fill the resource picker when you run **Connect** or **Recreate
 4. **Idle monitor** — a background watcher checks for active SSH connections. After the configured idle timeout with no active connections, the endpoint and its CML session are shut down to conserve resources.
 5. **Disconnect** — tears down the endpoint process, removes the SSH config entry, and cleans up state.
 
+### New: Sidebar
+Manage your sessions directly from the sidebar. Start, recreate or stop sessions. See your previous runtime configurations etc.
+
 ---
 
 ## Security
