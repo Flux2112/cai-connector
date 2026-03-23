@@ -52,8 +52,9 @@ export async function joinSessionFlow(
     return;
   }
 
+  const openInSameWindow = vscode.workspace.getConfiguration("caiConnector").get<boolean>("openInSameWindow", true);
   const remoteUri = vscode.Uri.parse(REMOTE_URI);
-  await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true });
+  await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: !openInSameWindow });
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
 }
 

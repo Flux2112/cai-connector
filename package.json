@@ -17,6 +17,7 @@
     "Other"
   ],
   "main": "./out/extension.js",
+  "extensionKind": ["ui"],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -170,6 +171,11 @@
           "type": "boolean",
           "default": true,
           "description": "When enabled, only the latest version of each runtime (grouped by editor, kernel, and edition) is shown in the runtime picker."
+        },
+        "caiConnector.openInSameWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, the remote SSH session opens in the current window instead of a new window."
         }
       }
     }
