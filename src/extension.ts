@@ -26,6 +26,7 @@ import { updateSshConfig } from "./sshConfig";
 import { ConnectParams, EndpointHostConfig, EndpointState, LastSessionConfig, ResourceInput, RuntimeAddonData, RuntimeData } from "./types";
 import { SessionPanel, SessionItem } from "./sessionPanel";
 import { killSessionRecord } from "./sessionKill";
+import { refreshSessionStatusesFromCml } from "./sessionHistory";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 
 const SECRET_KEY = "CML_API_KEY";
@@ -81,6 +82,19 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   panel.start();
   context.subscriptions.push(treeView, { dispose: () => panel.dispose() });
+
+  context.subscriptions.push(
+    treeView.onDidChangeVisibility(async (e) => {
+      if (!e.visible) { return; }
+      try {
+        const cdswctlPath = await ensureCdswctl(output);
+        const changed = await refreshSessionStatusesFromCml(
+          context.globalStorageUri.fsPath, cdswctlPath, output
+        );
+        if (changed) { panel.refresh(); }
+      } catch { /* silent — cached history still shown */ }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("caiConnector.refreshSessions", () => {
