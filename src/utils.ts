@@ -17,6 +17,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as cp from "child_process";
 import * as vscode from "vscode";
 import { ConnectParams, EndpointState, ResourceInput } from "./types";
 
@@ -136,4 +137,41 @@ export async function promptResources(
 
   const [cpus, memoryGb, gpus] = raw.split(",").map((s) => Number(s.trim()));
   return { cpus, memoryGb, gpus };
+}
+
+export function stopCmlSessions(
+  cdswctlPath: string,
+  project: string,
+  log: (msg: string) => void,
+  sessionId?: string,
+): void {
+  if (!project || !sessionId) {
+    log("No session ID or project — skipping session cleanup.");
+    return;
+  }
+  try {
+    const args = ["sessions", "stop", "/s", sessionId, "/p", project];
+    log(`Stopping session ${sessionId} in project ${project} (sync).`);
+    const out = cp.execFileSync(cdswctlPath, args, {
+      windowsHide: true,
+      timeout: 30_000,
+      cwd: path.dirname(cdswctlPath),
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (typeof out === "string" && out.trim().length > 0) {
+      log(`sessions stop output: ${out.trim()}`);
+    }
+    log("CML session stop completed.");
+  } catch (err) {
+    const errStr = String(err);
+    const maybeErr = err as { stdout?: string | Buffer; stderr?: string | Buffer };
+    const stdout = maybeErr.stdout ? String(maybeErr.stdout).trim() : "";
+    const stderr = maybeErr.stderr ? String(maybeErr.stderr).trim() : "";
+    if (/unexpected end of JSON/i.test(errStr + stdout + stderr)) {
+      log("Session stop returned known cdswctl bug (session likely stopped successfully).");
+    } else {
+      log(`Failed to stop CML session: ${errStr}`);
+    }
+  }
 }

@@ -53,7 +53,6 @@ export function addOrUpdateSession(storagePath: string, record: SessionRecord): 
   for (const r of records) {
     if (r.status === "active") {
       r.status = "inactive";
-      r.helperPid = undefined;
       r.endpointPid = undefined;
     }
   }
@@ -66,7 +65,6 @@ export function markSessionInactive(storagePath: string, id: string): void {
   const rec = records.find(r => r.id === id);
   if (rec) {
     rec.status = "inactive";
-    rec.helperPid = undefined;
     rec.endpointPid = undefined;
     saveHistory(storagePath, records);
   }
@@ -78,7 +76,6 @@ export function markAllInactive(storagePath: string): void {
   for (const r of records) {
     if (r.status === "active") {
       r.status = "inactive";
-      r.helperPid = undefined;
       r.endpointPid = undefined;
       changed = true;
     }

@@ -46,6 +46,8 @@ export type LastSessionConfig = {
   gpus: number;
   sessionId?: string;
   timestamp: string;
+  // Set when the user explicitly disconnects; absence means session was active on last save
+  disconnectedAt?: string;
 };
 
 export type ConnectParams = {
@@ -66,15 +68,6 @@ export type ResourceInput = {
   gpus: number;
 };
 
-export type EndpointHostConfig = {
-  cdswctlPath: string;
-  args: string[];
-  statePath: string;
-  logPath: string;
-  project: string;
-  idleTimeoutMinutes: number;
-};
-
 export type EndpointState = {
   status: "starting" | "ready" | "error";
   message?: string;
@@ -83,8 +76,14 @@ export type EndpointState = {
   port?: string;
   sessionId?: string;
   endpointPid?: number;
-  helperPid?: number;
   timestamp: string;
+  // Resource info embedded for session panel reactivity
+  project?: string;
+  runtimeId?: number;
+  addonId?: number | null;
+  cpus?: number;
+  memoryGb?: number;
+  gpus?: number;
 };
 
 export type SessionRecord = {
@@ -98,7 +97,6 @@ export type SessionRecord = {
   status: "active" | "inactive" | "error";
   port?: string;
   sessionId?: string;
-  helperPid?: number;
   endpointPid?: number;
   startedAt: string;
 };
@@ -107,8 +105,6 @@ export type SessionRecord = {
 export const SECRET_KEY = "CML_API_KEY";
 export const STATE_FILE = "endpoint_state.json";
 export const HISTORY_FILE = "session_history.json";
-export const HOST_CONFIG_FILE = "endpoint_host_config.json";
-export const LOG_FILE = "endpoint_host.log";
 export const CACHE_FILE = "runtimes_cache.json";
 export const SESSION_FILE = "last_session.json";
 export const CDSWCTL_TIMEOUT_MS = 30000;

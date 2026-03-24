@@ -19,6 +19,7 @@ import * as vscode from "vscode";
 import { runCdswctl } from "./cdswctl";
 import { resolveAndLogin } from "./auth";
 import { markSessionInactive } from "./sessionHistory";
+import { clearActiveEndpoint, getActiveEndpoint } from "./sessionManager";
 import { setActiveProject } from "./state";
 import { clearFile, getStoragePath, readState } from "./utils";
 import { CDSWCTL_TIMEOUT_MS, SessionRecord, STATE_FILE } from "./types";
@@ -30,13 +31,16 @@ export async function killSessionRecord(
 ): Promise<void> {
   output.appendLine(`Killing session ${record.id} in project ${record.projectName}...`);
 
-  if (record.helperPid) {
-    output.appendLine(`Killing helper process (PID ${record.helperPid})...`);
-    try { process.kill(record.helperPid); } catch { /* already dead */ }
-  }
   if (record.endpointPid) {
-    output.appendLine(`Killing endpoint process (PID ${record.endpointPid})...`);
+    output.appendLine(`Killing cdswctl process (PID ${record.endpointPid})...`);
     try { process.kill(record.endpointPid); } catch { /* already dead */ }
+  }
+
+  // If this matches our in-process endpoint, clear it
+  const activeEp = getActiveEndpoint();
+  if (activeEp?.process.pid === record.endpointPid) {
+    clearActiveEndpoint();
+    setActiveProject(null);
   }
 
   if (record.sessionId) {
@@ -65,12 +69,8 @@ export async function killSessionRecord(
   // Clear the state file if it belongs to this session
   const statePath = getStoragePath(context, STATE_FILE);
   const currentState = readState(statePath, output);
-  if (
-    currentState?.helperPid === record.helperPid ||
-    currentState?.endpointPid === record.endpointPid
-  ) {
+  if (currentState?.endpointPid === record.endpointPid) {
     clearFile(statePath);
-    setActiveProject(null);
   }
 
   markSessionInactive(context.globalStorageUri.fsPath, record.id);

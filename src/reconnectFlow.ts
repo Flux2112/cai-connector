@@ -17,21 +17,27 @@
 
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { cleanupExistingEndpoint } from "./endpointManager";
+import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
 import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon } from "./runtimePicker";
-import { executeConnect } from "./sessionManager";
+import { clearActiveEndpoint, executeConnect } from "./sessionManager";
 import { loadLastSession, saveLastSession, setActiveProject } from "./state";
-import { CACHE_FILE, STATE_FILE } from "./types";
+import { CACHE_FILE } from "./types";
 import { getStoragePath } from "./utils";
 
-export async function reconnectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
+export async function reconnectFlow(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  silent = false,
+): Promise<void> {
   if (process.platform !== "win32") {
     vscode.window.showErrorMessage("CAI Connector is Windows-only right now.");
     return;
   }
 
-  output.show(true);
+  if (!silent) {
+    output.show(true);
+  }
 
   const lastSession = loadLastSession(context);
   if (!lastSession) {
@@ -42,9 +48,12 @@ export async function reconnectFlow(context: vscode.ExtensionContext, output: vs
   const config = vscode.workspace.getConfiguration("caiConnector");
   const cacheHours = config.get<number>("cacheHours", 24);
   const cachePath = getStoragePath(context, CACHE_FILE);
-  const statePath = getStoragePath(context, STATE_FILE);
 
-  await cleanupExistingEndpoint(statePath, output);
+  clearActiveEndpoint();
+  const _killedOrphans = await killOrphanedEndpointProcesses(output);
+  if (_killedOrphans > 0) {
+    output.appendLine(`Orphan cleanup: ${_killedOrphans} ssh-endpoint process(es).`);
+  }
 
   const cdswctlPath = await resolveAndLogin(context, output);
   if (!cdswctlPath) {

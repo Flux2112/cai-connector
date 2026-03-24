@@ -18,23 +18,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import { EndpointHostConfig, EndpointState, HOST_CONFIG_FILE, SessionRecord, STATE_FILE } from "./types";
+import { EndpointState, SessionRecord, STATE_FILE } from "./types";
 import { addOrUpdateSession, loadHistory, markAllInactive } from "./sessionHistory";
-
-function parseArgsToResourceParams(
-  args: string[],
-): { runtimeId: number; addonId: number | null; cpus: number; memoryGb: number; gpus: number } {
-  let runtimeId = 0, cpus = 0, memoryGb = 0, gpus = 0;
-  let addonId: number | null = null;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-r") { runtimeId = Number(args[i + 1]); }
-    if (args[i] === "-c") { cpus = Number(args[i + 1]); }
-    if (args[i] === "-m") { memoryGb = Number(args[i + 1]); }
-    if (args[i] === "-g") { gpus = Number(args[i + 1]); }
-    if (args[i].startsWith("--addons=")) { addonId = Number(args[i].slice(9)); }
-  }
-  return { runtimeId, addonId, cpus, memoryGb, gpus };
-}
 
 export class SessionItem extends vscode.TreeItem {
   constructor(public readonly record: SessionRecord) {
@@ -103,24 +88,19 @@ export class SessionPanel implements vscode.TreeDataProvider<TreeNode> {
       if (!fs.existsSync(statePath)) { return; }
       const state = JSON.parse(fs.readFileSync(statePath, "utf8").trim()) as EndpointState;
       if (state.status !== "ready") { return; }
-
-      const configPath = path.join(this.storagePath, HOST_CONFIG_FILE);
-      if (!fs.existsSync(configPath)) { return; }
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as EndpointHostConfig;
-      const p = parseArgsToResourceParams(config.args);
+      if (!state.project) { return; }
 
       addOrUpdateSession(this.storagePath, {
         id: state.timestamp,
-        projectName: config.project,
-        runtimeId: p.runtimeId,
-        addonId: p.addonId,
-        cpus: p.cpus,
-        memoryGb: p.memoryGb,
-        gpus: p.gpus,
+        projectName: state.project,
+        runtimeId: state.runtimeId ?? 0,
+        addonId: state.addonId ?? null,
+        cpus: state.cpus ?? 0,
+        memoryGb: state.memoryGb ?? 0,
+        gpus: state.gpus ?? 0,
         status: "active",
         port: state.port,
         sessionId: state.sessionId,
-        helperPid: state.helperPid,
         endpointPid: state.endpointPid,
         startedAt: state.timestamp,
       });

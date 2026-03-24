@@ -17,15 +17,15 @@
 
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { cleanupExistingEndpoint } from "./endpointManager";
+import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { loadHistory } from "./sessionHistory";
 import { killSessionRecord } from "./sessionKill";
-import { executeConnect } from "./sessionManager";
+import { clearActiveEndpoint, executeConnect } from "./sessionManager";
 import { SessionItem } from "./sessionPanel";
 import { updateSshConfig } from "./sshConfig";
 import { saveLastSession, setActiveProject } from "./state";
-import { ConnectParams, REMOTE_URI, STATE_FILE } from "./types";
-import { getStoragePath, isProcessAlive, readState } from "./utils";
+import { ConnectParams, REMOTE_URI } from "./types";
+import { isProcessAlive } from "./utils";
 
 export async function joinSessionFlow(
   item: SessionItem,
@@ -40,7 +40,7 @@ export async function joinSessionFlow(
     return;
   }
 
-  if (!record.helperPid || !isProcessAlive(record.helperPid)) {
+  if (!record.endpointPid || !isProcessAlive(record.endpointPid)) {
     vscode.window.showErrorMessage("Endpoint process is no longer running. Kill and recreate the session.");
     return;
   }
@@ -53,8 +53,10 @@ export async function joinSessionFlow(
   }
 
   const openInSameWindow = vscode.workspace.getConfiguration("caiConnector").get<boolean>("openInSameWindow", true);
+  // Force a new window when already inside a remote session, same logic as executeConnect
+  const forceNewWindow = !openInSameWindow || Boolean(vscode.env.remoteName);
   const remoteUri = vscode.Uri.parse(REMOTE_URI);
-  await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: !openInSameWindow });
+  await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow });
   vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
 }
 
@@ -67,7 +69,6 @@ export async function recreateSessionFlow(
   output.show(true);
 
   const storagePath = context.globalStorageUri.fsPath;
-  const statePath = getStoragePath(context, STATE_FILE);
 
   // Silently kill the currently active known session (extension-owned) before recreating.
   // Only sessions in session_history.json (opened by this extension) are ever killed.
@@ -78,8 +79,12 @@ export async function recreateSessionFlow(
     await killSessionRecord(activeRecord, context, output);
   }
 
-  // Clean up any orphan processes regardless
-  await cleanupExistingEndpoint(statePath, output);
+  // Clean up any in-process endpoint and orphan processes
+  clearActiveEndpoint();
+  const _killedOrphans = await killOrphanedEndpointProcesses(output);
+  if (_killedOrphans > 0) {
+    output.appendLine(`Orphan cleanup: ${_killedOrphans} ssh-endpoint process(es).`);
+  }
 
   const cdswctlPath = await resolveAndLogin(context, output);
   if (!cdswctlPath) {

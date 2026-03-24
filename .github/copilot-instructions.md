@@ -57,6 +57,10 @@ When adding tests, prefer a lightweight framework (e.g., VS Code's `@vscode/test
 - **Remote-SSH**: Connects by writing SSH config then calling `vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow: true })`.
 - **SSH config**: Regex-based parsing of `~/.ssh/config` to insert/update `Host cml` block with dynamic port.
 
+## AI Agent Guidelines
+
+- **Never use shell commands to modify source files.** File editing tools (`replace_string_in_file`, `create_file`, `multi_replace_string_in_file`) are always available and must be used instead. Shell-based approaches like `head`, `cp`, `sed -i`, or output redirection (`>`) to write or truncate source files are fragile, non-reversible, and unsafe — do not use them even as a fallback.
+
 ## Security
 
 - **API keys**: Stored via VS Code's `context.secrets` API — never written to plain-text config or logs. Prompted with `password: true` on `showInputBox`. On retrieval failure, re-prompt the user rather than silently proceeding.

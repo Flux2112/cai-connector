@@ -18,12 +18,12 @@
 import * as os from "os";
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { cleanupExistingEndpoint } from "./endpointManager";
+import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
 import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon, filterLatestRuntimes } from "./runtimePicker";
-import { executeConnect } from "./sessionManager";
+import { clearActiveEndpoint, executeConnect } from "./sessionManager";
 import { loadLastSession, saveLastSession, setActiveProject } from "./state";
-import { CACHE_FILE, STATE_FILE } from "./types";
+import { CACHE_FILE } from "./types";
 import { getStoragePath, promptResources } from "./utils";
 
 export async function connectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
@@ -42,9 +42,10 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
   const latestRuntimesOnly = config.get<boolean>("latestRuntimesOnly", true);
 
   const cachePath = getStoragePath(context, CACHE_FILE);
-  const statePath = getStoragePath(context, STATE_FILE);
 
-  await cleanupExistingEndpoint(statePath, output);
+  clearActiveEndpoint();
+  const _killedOrphans = await killOrphanedEndpointProcesses(output);
+  output.appendLine(`Orphan cleanup: ${_killedOrphans} orphaned ssh-endpoint process(es).`);
 
   const cdswctlPath = await resolveAndLogin(context, output);
   if (!cdswctlPath) {

@@ -176,6 +176,11 @@
           "type": "boolean",
           "default": true,
           "description": "When enabled, the remote SSH session opens in the current window instead of a new window."
+        },
+        "caiConnector.autoReconnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "When enabled, automatically reconnects to the last session on VS Code startup."
         }
       }
     }
