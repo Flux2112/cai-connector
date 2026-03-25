@@ -25,7 +25,6 @@ import { disconnectFlow, getActiveEndpoint, isSurrenderedToSsh } from "./session
 import { SessionPanel, SessionItem } from "./sessionPanel";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 import { killSessionRecord } from "./sessionKill";
-import { loadLastSession } from "./state";
 import { clearFile, isProcessAlive, stopCmlSessions } from "./utils";
 import { SECRET_KEY } from "./types";
 
@@ -134,50 +133,7 @@ export function activate(context: vscode.ExtensionContext): void {
       })
       .catch(() => { /* best-effort */ })
       .finally(() => {
-        // Never auto-reconnect from inside a remote window (working or broken).
-        // vscode.env.remoteName is non-empty on the local UI side of any remote session.
-        output.appendLine(`[auto-reconnect] remoteName check: ${JSON.stringify(vscode.env.remoteName)}`);
-        if (vscode.env.remoteName) {
-          output.appendLine(`[auto-reconnect] SKIPPED — running inside remote window (remoteName = ${vscode.env.remoteName})`);
-          // If the endpoint is dead, offer to heal the connection or fall back to local.
-          const hasDeadEndpoint = activeSessions.some(
-            (r) => r.endpointPid != null && !isProcessAlive(r.endpointPid),
-          );
-          const lastSession = loadLastSession(context);
-          if (hasDeadEndpoint && lastSession && !lastSession.disconnectedAt) {
-            output.appendLine("[remote-heal] Dead endpoint detected — showing reconnect prompt");
-            vscode.window.showWarningMessage(
-              "CAI Connector: SSH endpoint has stopped.",
-              "Reconnect to CML",
-              "Close Remote Window",
-            ).then((choice) => {
-              if (choice === "Reconnect to CML") {
-                reconnectFlow(context, output).catch((err) => {
-                  output.appendLine(`[remote-heal] Reconnect failed: ${String(err)}`);
-                });
-              } else if (choice === "Close Remote Window") {
-                vscode.commands.executeCommand("workbench.action.remote.close");
-              }
-            });
-          }
-          return;
-        }
-        const autoReconnect = vscode.workspace.getConfiguration("caiConnector").get<boolean>("autoReconnect", true);
-        output.appendLine(`[auto-reconnect] autoReconnect setting = ${autoReconnect}`);
-        if (!autoReconnect) {
-          output.appendLine("[auto-reconnect] SKIPPED — disabled in settings");
-          return;
-        }
-        const lastSession = loadLastSession(context);
-        output.appendLine(`[auto-reconnect] lastSession = ${JSON.stringify(lastSession ? { projectName: lastSession.projectName, disconnectedAt: lastSession.disconnectedAt, timestamp: lastSession.timestamp } : null)}`);
-        if (lastSession && !lastSession.disconnectedAt) {
-          output.appendLine(`[auto-reconnect] FIRING for project ${lastSession.projectName}`);
-          reconnectFlow(context, output, true).catch((err) => {
-            output.appendLine(`Auto-reconnect failed: ${String(err)}`);
-          });
-        } else {
-          output.appendLine(`[auto-reconnect] SKIPPED — no eligible last session`);
-        }
+        output.appendLine("[auto-reconnect] SKIPPED — automatic session recreation is disabled");
       });
   }
 }
