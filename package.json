@@ -93,7 +93,12 @@
       },
       {
         "command": "caiConnector.clearCache",
-        "title": "Clear Cache",
+        "title": "Clear Runtime Cache",
+        "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.resetApiKey",
+        "title": "Reset API Key",
         "category": "CAI Connector"
       },
       {

@@ -35,6 +35,19 @@ export class RuntimeManager {
     return this.runtimes;
   }
 
+  public clear(): boolean {
+    this.runtimes = [];
+    if (!fs.existsSync(this.cachePath)) {
+      return false;
+    }
+    try {
+      fs.unlinkSync(this.cachePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   public async fetchRuntimes(cdswctlPath: string, forceRefresh: boolean, output: vscode.OutputChannel): Promise<boolean> {
     if (!forceRefresh && this.loadCacheIfValid()) {
       output.appendLine(`Loaded ${this.runtimes.length} runtimes from cache.`);

@@ -16,6 +16,7 @@
  */
 
 import * as vscode from "vscode";
+import * as path from "path";
 import { ensureCdswctl } from "./cdswctl";
 import { connectFlow, browseRuntimesFlow } from "./connectFlow";
 import { killOrphanedEndpointProcesses } from "./endpointManager";
@@ -25,8 +26,9 @@ import { disconnectFlow, getActiveEndpoint, isSurrenderedToSsh } from "./session
 import { SessionPanel, SessionItem } from "./sessionPanel";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 import { killSessionRecord } from "./sessionKill";
+import { RuntimeManager } from "./runtimeManager";
 import { clearFile, isProcessAlive, stopCmlSessions } from "./utils";
-import { SECRET_KEY } from "./types";
+import { CACHE_FILE, SECRET_KEY } from "./types";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("CAI Connector");
@@ -52,6 +54,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("caiConnector.resetApiKey", async () => {
       await resetApiKeyFlow(context, output);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.clearCache", async () => {
+      await clearCacheFlow(context, output);
     })
   );
 
@@ -163,5 +171,22 @@ async function resetApiKeyFlow(
   await context.secrets.delete(SECRET_KEY);
   output.appendLine("API key removed from secret storage.");
   vscode.window.showInformationMessage("CML API key has been reset. You will be prompted on next connect.");
+}
+
+async function clearCacheFlow(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  const cacheHours = vscode.workspace.getConfiguration("caiConnector").get<number>("cacheHours", 24);
+  const cachePath = path.join(context.globalStorageUri.fsPath, CACHE_FILE);
+  const manager = new RuntimeManager(cachePath, cacheHours);
+  const removed = manager.clear();
+  if (removed) {
+    output.appendLine(`Runtime cache cleared: ${cachePath}`);
+    vscode.window.showInformationMessage("CAI Connector runtime cache cleared.");
+  } else {
+    output.appendLine(`No runtime cache to clear at: ${cachePath}`);
+    vscode.window.showInformationMessage("No runtime cache was present.");
+  }
 }
 
