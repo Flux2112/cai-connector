@@ -2,7 +2,7 @@
   "name": "cai-connector",
   "displayName": "CAI Connector",
   "description": "Create and connect to Cloudera AI sessions over SSH.",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "publisher": "DefySoftwareSolutions",
   "repository": {
     "type": "git",
