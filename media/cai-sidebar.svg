@@ -1,5 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
   <title>CAI Connector</title>
+  <!-- Scale content ~1.5x around its visual center (11.5, 12) so the icon
+       fills more of the 24x24 activity-bar slot. -->
+  <g transform="translate(12 12) scale(1.5) translate(-11.5 -12)">
   <!-- Cloud outline -->
   <path d="M6.5 10.5
            a3.5 3.5 0 0 1 6.7 -1.2
@@ -19,4 +22,5 @@
         fill="currentColor"
         stroke="none"
         letter-spacing="0.2">CAI</text>
+  </g>
 </svg>
