@@ -26,7 +26,7 @@
         {
           "id": "cai-connector-sidebar",
           "title": "CAI Connector",
-          "icon": "$(server)"
+          "icon": "media/cai-sidebar.svg"
         }
       ]
     },

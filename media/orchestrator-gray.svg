@@ -1,0 +1,57 @@
+<svg width="38" height="38" viewBox="0 0 48 48" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Centered spinner. Outer transform uses a uniform scale so rotation
+    traces a true circle (was non-uniform 0.709 vs 0.719 -> ellipse).
+    Translation places the spinner's visual center at (24, 24).
+    Inner mirror fixed to mirror exactly around x=24 with no y offset.
+  -->
+  <g id="layer1">
+    <g id="g4214"
+       transform="matrix(0.71,0,0,0.71,6.93,7.07)"
+       style="fill:#5d5d5d;fill-opacity:1;stroke:#5d5d5d;stroke-opacity:1;">
+
+      <!-- Left half -->
+      <g id="g4141">
+        <ellipse id="path286-1-2"
+                 cx="3.0935912" cy="12.28598"
+                 rx="5.6415343" ry="5.5655861"
+                 style="fill:#5d5d5d;fill-opacity:1;stroke-width:0;"/>
+        <path id="path111-1-6"
+              d="M 7.8336125,7.2052671 A 23.362398,23.434309 0 0 1 20.005661,0.98420871"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;"/>
+        <path id="path111-1-6-9"
+              d="M 2.4014869,32.841124 A 23.362398,23.434309 0 0 1 1.2991039,18.790904"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;"/>
+      </g>
+
+      <!-- Right half: perfect mirror around x=24, no y offset -->
+      <g id="g4141-3" transform="matrix(-1,0,0,1,48,0)">
+        <ellipse id="path286-1-2-6"
+                 cx="3.0935912" cy="12.28598"
+                 rx="5.6415343" ry="5.5655861"
+                 style="fill:#5d5d5d;fill-opacity:1;stroke-width:0;"/>
+        <path id="path111-1-6-3"
+              d="M 7.8336125,7.2052671 A 23.362398,23.434309 0 0 1 20.005661,0.98420871"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;"/>
+        <path id="path111-1-6-9-2"
+              d="M 2.4014869,32.841124 A 23.362398,23.434309 0 0 1 1.2991039,18.790904"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;"/>
+      </g>
+
+      <!-- Bottom arcs + dot -->
+      <g id="g1254">
+        <path id="path111-1-6-5"
+              d="M 42.409823,38.552599 A 23.362398,23.434309 0 0 1 30.830505,46.53534"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;stroke-linecap:butt;stroke-miterlimit:1;"/>
+        <path id="path111-1-6-5-5"
+              d="M 17.169341,46.535036 A 23.362398,23.434309 0 0 1 5.5900251,38.552297"
+              style="fill:none;stroke:#5d5d5d;stroke-width:5.60343;stroke-linecap:butt;"/>
+        <ellipse id="path286"
+                 cx="24" cy="47"
+                 rx="5.6415343" ry="5.5655861"
+                 style="fill:#5d5d5d;fill-opacity:1;stroke-width:0;"/>
+      </g>
+
+    </g>
+  </g>
+</svg>
