@@ -197,7 +197,8 @@
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package",
-    "publish": "vsce publish"
+    "publish": "vsce publish",
+    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

@@ -19,7 +19,41 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-const HOST_CML_PATTERN = /^Host\s+cml\s*\n(?:^[ \t]+\S.*\n?)*/gm;
+const HOST_LINE = /^\s*Host\s+(.+?)\s*$/i;
+
+function isCmlHostLine(line: string): boolean {
+  const m = line.match(HOST_LINE);
+  if (!m) {
+    return false;
+  }
+  // Match only if "cml" is one of the listed host patterns (Host accepts multiple).
+  return m[1].split(/\s+/).some((token) => token === "cml");
+}
+
+function stripCmlBlocks(content: string): string {
+  const lines = content.split(/\r?\n/);
+  const out: string[] = [];
+  let skipping = false;
+
+  for (const line of lines) {
+    const isHost = HOST_LINE.test(line);
+    if (isHost) {
+      skipping = isCmlHostLine(line);
+      if (!skipping) {
+        out.push(line);
+      }
+      continue;
+    }
+    if (skipping) {
+      // Skip everything (indented options, blank lines, comments) until next Host.
+      continue;
+    }
+    out.push(line);
+  }
+
+  // Collapse 3+ consecutive blank lines down to a single blank line.
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
 
 export function updateSshConfig(port: string): boolean {
   if (!port || !/^\d+$/.test(port)) {
@@ -42,27 +76,22 @@ export function updateSshConfig(port: string): boolean {
     throw new Error(`Failed to read SSH config ${configFile}: ${String(err)}`);
   }
 
-  const newBlock = `Host cml\n  HostName localhost\n  Port ${port}\n  User cdsw`;
+  const newBlock =
+    `Host cml\n` +
+    `  HostName localhost\n` +
+    `  Port ${port}\n` +
+    `  User cdsw\n` +
+    `  StrictHostKeyChecking no\n` +
+    `  UserKnownHostsFile /dev/null\n` +
+    `  LogLevel ERROR`;
 
-  const matches = content.match(HOST_CML_PATTERN);
-  let updated = content;
+  let updated = stripCmlBlocks(content);
 
-  if (matches && matches.length > 1) {
-    updated = updated.replace(HOST_CML_PATTERN, "");
-    updated = updated.replace(/\n{3,}/g, "\n\n");
-  }
-
-  if (updated.match(HOST_CML_PATTERN)) {
-    updated = updated.replace(HOST_CML_PATTERN, newBlock);
+  if (updated.trim()) {
+    updated = updated.replace(/\s*$/, "");
+    updated += "\n\n" + newBlock + "\n";
   } else {
-    if (updated.trim()) {
-      if (!updated.endsWith("\n\n")) {
-        updated = updated.endsWith("\n") ? updated + "\n" : updated + "\n\n";
-      }
-      updated += newBlock + "\n";
-    } else {
-      updated = newBlock + "\n";
-    }
+    updated = newBlock + "\n";
   }
 
   try {
@@ -71,6 +100,9 @@ export function updateSshConfig(port: string): boolean {
     throw new Error(`Failed to write SSH config ${configFile}: ${String(err)}`);
   }
 
-  const finalMatches = updated.match(HOST_CML_PATTERN);
-  return !!finalMatches && finalMatches.length === 1;
+  // Verify exactly one Host cml block was written.
+  const cmlHostCount = updated
+    .split(/\r?\n/)
+    .filter((line) => isCmlHostLine(line)).length;
+  return cmlHostCount === 1;
 }
