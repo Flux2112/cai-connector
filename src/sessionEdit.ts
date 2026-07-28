@@ -21,6 +21,7 @@ import { recreateSessionFlow } from "./sessionActions";
 import { SessionFormPanel } from "./sessionForm";
 import { buildSessionFormInit, refreshRuntimes } from "./sessionFormData";
 import { loadHistory, updateSessionConfig } from "./sessionHistory";
+import { isLive } from "./sessionStatus";
 import { SessionItem } from "./sessionPanel";
 
 /**
@@ -72,7 +73,9 @@ export async function editSessionFlow(
       if (!updated) {
         return;
       }
-      if (updated.status !== "active") {
+      // A session with a live tunnel or a live CML session behind it has to be
+      // recreated for new resources to take effect; anything else just saves.
+      if (!isLive(updated)) {
         vscode.window.showInformationMessage("Saved. The new settings apply the next time you create this session.");
         return;
       }

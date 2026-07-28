@@ -21,12 +21,6 @@ import * as vscode from "vscode";
 import { LastSessionConfig, SESSION_FILE } from "./types";
 import { getStoragePath } from "./utils";
 
-let activeProject: string | null = null;
-
-export function setActiveProject(project: string | null): void {
-  activeProject = project;
-}
-
 export function saveLastSession(context: vscode.ExtensionContext, session: LastSessionConfig): void {
   const sessionPath = getStoragePath(context, SESSION_FILE);
   try {

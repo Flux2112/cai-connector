@@ -208,8 +208,14 @@ input[aria-invalid="true"] {
   background: var(--muted);
 }
 
-.recall-card[data-status="active"] .stripe {
+.recall-card[data-status="active"] .stripe,
+.recall-card[data-status="starting"] .stripe {
   background: var(--ok);
+}
+
+/* Endpoint and CML session disagree — usually an orphan left on the platform. */
+.recall-card[data-status="error"] .stripe {
+  background: var(--warning);
 }
 
 .recall-card .name {

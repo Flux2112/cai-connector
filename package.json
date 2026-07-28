@@ -49,6 +49,11 @@
           "command": "caiConnector.refreshSessions",
           "when": "view == caiConnector.sessionsView",
           "group": "navigation"
+        },
+        {
+          "command": "caiConnector.cleanUpOrphans",
+          "when": "view == caiConnector.sessionsView",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -59,27 +64,17 @@
         },
         {
           "command": "caiConnector.recreateSession",
-          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
-          "group": "inline"
-        },
-        {
-          "command": "caiConnector.recreateSession",
-          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|inactive|orphan)Session$/",
           "group": "inline"
         },
         {
           "command": "caiConnector.editSession",
-          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
-          "group": "inline"
-        },
-        {
-          "command": "caiConnector.editSession",
-          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|inactive|orphan)Session$/",
           "group": "inline"
         },
         {
           "command": "caiConnector.killSession",
-          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|orphan)Session$/",
           "group": "inline"
         }
       ]
@@ -93,8 +88,14 @@
       },
       {
         "command": "caiConnector.disconnect",
-        "title": "Disconnect",
+        "title": "Disconnect Sessions",
         "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.cleanUpOrphans",
+        "title": "Clean Up Orphaned Sessions",
+        "category": "CAI Connector",
+        "icon": "$(clear-all)"
       },
       {
         "command": "caiConnector.browseRuntimes",
@@ -218,6 +219,11 @@
           "type": "boolean",
           "default": true,
           "description": "When enabled, only the latest version of each runtime (grouped by editor, kernel, and edition) is shown in the runtime picker."
+        },
+        "caiConnector.autoStopOrphanedSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop CML sessions this extension created once their local SSH endpoint is gone. Only sessions recorded in the extension's own history are ever stopped, and only ones CML confirms are still running. Disable this to clean up manually with 'Clean Up Orphaned Sessions'."
         },
         "caiConnector.openInSameWindow": {
           "type": "boolean",

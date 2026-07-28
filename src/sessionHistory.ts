@@ -17,11 +17,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import * as vscode from "vscode";
-import { runCdswctl } from "./cdswctl";
+import { capRecords } from "./sessionStatus";
 import { HISTORY_FILE, SessionRecord } from "./types";
-
-const MAX_SESSIONS = 5;
 
 export function loadHistory(storagePath: string): SessionRecord[] {
   const file = path.join(storagePath, HISTORY_FILE);
@@ -39,25 +36,56 @@ export function saveHistory(storagePath: string, records: SessionRecord[]): void
   const file = path.join(storagePath, HISTORY_FILE);
   try {
     fs.mkdirSync(storagePath, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(records.slice(0, MAX_SESSIONS), null, 2), "utf8");
+    fs.writeFileSync(file, JSON.stringify(capRecords(records), null, 2), "utf8");
   } catch {
     // best-effort — don't block flows
   }
 }
 
+/**
+ * Inserts a new session or merges into the existing record with the same id.
+ *
+ * Sessions run in parallel, so this deliberately touches nothing else: no
+ * one-record-per-project rule, and no marking other records inactive. A record's
+ * status is owned by the reconciler, which asks the endpoint pid and CML rather
+ * than assuming a newer session replaced an older one.
+ *
+ * The read-modify-write is not atomic across windows. Merging by id keeps the
+ * damage from a simultaneous write to a lost update on one field rather than a
+ * lost session, and the reconciler repairs statuses on the next pass.
+ */
 export function addOrUpdateSession(storagePath: string, record: SessionRecord): void {
-  let records = loadHistory(storagePath);
-  // Remove all existing records for this project (only one per project is tracked)
-  records = records.filter(r => r.projectName !== record.projectName);
-  // Mark any remaining active records (other projects) as inactive
-  for (const r of records) {
-    if (r.status === "active") {
-      r.status = "inactive";
-      r.endpointPid = undefined;
-    }
+  const records = loadHistory(storagePath);
+  const index = records.findIndex((r) => r.id === record.id);
+  if (index >= 0) {
+    records[index] = { ...records[index], ...record };
+  } else {
+    records.unshift(record);
   }
-  records.unshift(record);
   saveHistory(storagePath, records);
+}
+
+/** Applies a patch to one record by id, leaving the rest of the file alone. */
+export function patchSession(
+  storagePath: string,
+  id: string,
+  patch: Partial<SessionRecord>,
+): boolean {
+  const records = loadHistory(storagePath);
+  const target = records.find((r) => r.id === id);
+  if (!target) {
+    return false;
+  }
+  Object.assign(target, patch);
+  saveHistory(storagePath, records);
+  return true;
+}
+
+/** Host aliases already claimed by stored sessions, so a new one can avoid them. */
+export function takenHostAliases(storagePath: string): string[] {
+  return loadHistory(storagePath)
+    .map((r) => r.hostAlias)
+    .filter((alias): alias is string => Boolean(alias));
 }
 
 export type SessionConfigPatch = {
@@ -70,75 +98,28 @@ export type SessionConfigPatch = {
 };
 
 /**
- * Rewrites the configuration of one stored session, leaving its status, port and
- * endpoint PID alone. Returns false when the record no longer exists.
+ * Rewrites the configuration of one stored session, leaving its status, port,
+ * host alias and endpoint PID alone. Returns false when the record is gone.
  *
- * Renaming the project can collide with another record, so the one-per-project
- * invariant is re-applied in favour of the record being edited.
+ * Several sessions may share a project now, so renaming one never displaces
+ * another.
  */
 export function updateSessionConfig(storagePath: string, id: string, patch: SessionConfigPatch): boolean {
-  const records = loadHistory(storagePath);
-  const target = records.find(r => r.id === id);
-  if (!target) {
-    return false;
-  }
-  Object.assign(target, patch);
-  const deduped = records.filter(r => r.id === id || r.projectName !== patch.projectName);
-  saveHistory(storagePath, deduped);
-  return true;
+  return patchSession(storagePath, id, patch);
 }
 
-export function markSessionInactive(storagePath: string, id: string): void {
-  const records = loadHistory(storagePath);
-  const rec = records.find(r => r.id === id);
-  if (rec) {
-    rec.status = "inactive";
-    rec.endpointPid = undefined;
-    saveHistory(storagePath, records);
-  }
-}
-
-export function markAllInactive(storagePath: string): void {
-  const records = loadHistory(storagePath);
-  let changed = false;
-  for (const r of records) {
-    if (r.status === "active") {
-      r.status = "inactive";
-      r.endpointPid = undefined;
-      changed = true;
-    }
-  }
-  if (changed) {
-    saveHistory(storagePath, records);
-  }
-}
-
-export async function refreshSessionStatusesFromCml(
-  storagePath: string,
-  cdswctlPath: string,
-  output: vscode.OutputChannel,
-): Promise<boolean> {
-  const records = loadHistory(storagePath);
-  const activeWithSession = records.filter(r => r.status === "active" && r.sessionId);
-  if (activeWithSession.length === 0) { return false; }
-
-  const projects = [...new Set(activeWithSession.map(r => r.projectName))];
-  let changed = false;
-
-  for (const project of projects) {
-    const result = await runCdswctl(cdswctlPath, ["sessions", "list", "/p", project], output, 15000);
-    if (result.exitCode !== 0) {
-      output.appendLine(`refreshSessionStatuses: skipping ${project} (exit ${result.exitCode})`);
-      continue;
-    }
-    const runningSessions = new Set(result.stdout.trim().split(/\s+/).filter(Boolean));
-    for (const rec of activeWithSession.filter(r => r.projectName === project)) {
-      if (!runningSessions.has(rec.sessionId!)) {
-        markSessionInactive(storagePath, rec.id);
-        changed = true;
-      }
-    }
-  }
-
-  return changed;
+/**
+ * Records that a session is fully torn down — local tunnel gone *and* the CML
+ * session stopped. Callers that only killed the local process must not use this,
+ * or a session still running on CML would be recorded as cleaned up.
+ */
+export function markSessionStopped(storagePath: string, id: string): void {
+  patchSession(storagePath, id, {
+    status: "inactive",
+    endpointStatus: "stopped",
+    cmlStatus: "stopped",
+    endpointPid: undefined,
+    port: undefined,
+    lastCheckedAt: new Date().toISOString(),
+  });
 }

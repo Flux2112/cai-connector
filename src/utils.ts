@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as cp from "child_process";
 import * as vscode from "vscode";
-import { ConnectParams, EndpointState } from "./types";
+import { ConnectParams } from "./types";
 
 export function getStoragePath(context: vscode.ExtensionContext, fileName: string): string {
   return path.join(context.globalStorageUri.fsPath, fileName);
@@ -41,19 +41,6 @@ export function clearFile(filePath: string): void {
     }
   } catch {
     // Ignore
-  }
-}
-
-export function readState(statePath: string, output?: vscode.OutputChannel): EndpointState | null {
-  try {
-    const raw = fs.readFileSync(statePath, "utf8").trim();
-    if (!raw) {
-      return null;
-    }
-    return JSON.parse(raw) as EndpointState;
-  } catch (err) {
-    output?.appendLine(`Failed to read endpoint state: ${String(err)}`);
-    return null;
   }
 }
 

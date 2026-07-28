@@ -17,13 +17,13 @@
 
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
 import { pickRuntime, filterLatestRuntimes } from "./runtimePicker";
 import { SessionFormPanel } from "./sessionForm";
 import { buildSessionFormInit, refreshRuntimes } from "./sessionFormData";
-import { clearActiveEndpoint, executeConnect } from "./sessionManager";
-import { loadLastSession, saveLastSession, setActiveProject } from "./state";
+import { reconcileProcesses } from "./sessionReconciler";
+import { executeConnect } from "./sessionManager";
+import { saveLastSession } from "./state";
 import { CACHE_FILE, SessionFormValues } from "./types";
 import { getStoragePath } from "./utils";
 
@@ -35,9 +35,10 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
 
   output.show(true);
 
-  clearActiveEndpoint();
-  const killedOrphans = await killOrphanedEndpointProcesses(output);
-  output.appendLine(`Orphan cleanup: ${killedOrphans} orphaned ssh-endpoint process(es).`);
+  // Sessions run in parallel now, so connecting must not disturb anything that
+  // is already running. This only refreshes what we know about existing
+  // endpoints; it never kills one and never stops a CML session.
+  await reconcileProcesses(context.globalStorageUri.fsPath, output);
 
   // The API key prompt stays a native input box — no secret ever reaches the webview.
   const cdswctlPath = await resolveAndLogin(context, output);
@@ -78,14 +79,12 @@ async function launchSession(
     output.appendLine(`Saved default resources: ${values.cpus} CPU, ${values.memoryGb} GB, ${values.gpus} GPU.`);
   }
 
-  setActiveProject(values.project);
   output.appendLine(`Connecting to project ${values.project}...`);
 
-  // Auto-stop only the known extension-owned session for this project, if any
-  const lastSession = loadLastSession(context);
-  const autoStopSessions =
-    lastSession?.projectName === values.project && lastSession.sessionId ? lastSession.sessionId : false;
-
+  // Never stop anything on a plain connect. A second session in a project the
+  // user already has open is now a supported thing to want, and the previous
+  // behaviour of stopping the last session made that impossible. Recreate and
+  // Kill remain the explicit ways to end a session.
   const sessionId = await executeConnect(
     context,
     output,
@@ -97,7 +96,7 @@ async function launchSession(
       memory: values.memoryGb,
       gpus: values.gpus,
       cdswctlPath,
-      autoStopSessions,
+      autoStopSessions: false,
     },
     (step, detail) => panel.reportProgress(step, detail),
   );

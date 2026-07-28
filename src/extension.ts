@@ -19,59 +19,29 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { ensureCdswctl } from "./cdswctl";
 import { connectFlow, browseRuntimesFlow } from "./connectFlow";
-import { killOrphanedEndpointProcesses } from "./endpointManager";
+import { disconnectFlow } from "./disconnectFlow";
+import { killUntrackedEndpointProcesses } from "./endpointManager";
+import { listEndpoints } from "./endpointRegistry";
 import { reconnectFlow } from "./reconnectFlow";
-import { loadHistory, refreshSessionStatusesFromCml } from "./sessionHistory";
-import { disconnectFlow, getActiveEndpoint, isSurrenderedToSsh } from "./sessionManager";
+import { loadHistory } from "./sessionHistory";
+import { cleanUpOrphansFlow, warnAboutOrphans } from "./orphanCleanup";
+import {
+  reconcileProcesses, reconcileWithCml, stopOrphanedCmlSessions, syncSshConfigFromHistory,
+} from "./sessionReconciler";
 import { SessionPanel, SessionItem } from "./sessionPanel";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 import { editSessionFlow } from "./sessionEdit";
 import { killSessionRecord } from "./sessionKill";
 import { RuntimeManager } from "./runtimeManager";
-import { clearFile, isProcessAlive, stopCmlSessions } from "./utils";
-import { CACHE_FILE, SECRET_KEY } from "./types";
+import { clearFile, stopCmlSessions } from "./utils";
+import { CACHE_FILE, SECRET_KEY, STATE_FILE } from "./types";
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("CAI Connector");
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.connect", async () => {
-      await connectFlow(context, output);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.disconnect", async () => {
-      await disconnectFlow(context, output);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.browseRuntimes", async () => {
-      await browseRuntimesFlow(context, output);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.resetApiKey", async () => {
-      await resetApiKeyFlow(context, output);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.clearCache", async () => {
-      await clearCacheFlow(context, output);
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.reconnect", async () => {
-      await reconnectFlow(context, output);
-    })
-  );
+  const storagePath = context.globalStorageUri.fsPath;
 
   // Sidebar sessions panel
-  const panel = new SessionPanel(context.globalStorageUri.fsPath);
+  const panel = new SessionPanel(storagePath);
   const treeView = vscode.window.createTreeView("caiConnector.sessionsView", {
     treeDataProvider: panel,
     showCollapseAll: true,
@@ -79,93 +49,143 @@ export function activate(context: vscode.ExtensionContext): void {
   panel.start();
   context.subscriptions.push(treeView, { dispose: () => panel.dispose() });
 
-  context.subscriptions.push(
-    treeView.onDidChangeVisibility(async (e) => {
-      if (!e.visible) { return; }
-      try {
-        const cdswctlPath = await ensureCdswctl(output);
-        const changed = await refreshSessionStatusesFromCml(
-          context.globalStorageUri.fsPath, cdswctlPath, output
-        );
-        if (changed) { panel.refresh(); }
-      } catch { /* silent — cached history still shown */ }
-    })
-  );
+  const commands: Record<string, (...args: never[]) => unknown> = {
+    "caiConnector.connect": () => connectFlow(context, output),
+    "caiConnector.disconnect": async () => {
+      await disconnectFlow(context, output);
+      panel.reconcileAndRefresh();
+    },
+    "caiConnector.browseRuntimes": () => browseRuntimesFlow(context, output),
+    "caiConnector.resetApiKey": () => resetApiKeyFlow(context, output),
+    "caiConnector.clearCache": () => clearCacheFlow(context, output),
+    "caiConnector.reconnect": () => reconnectFlow(context, output),
+    "caiConnector.refreshSessions": () => panel.reconcileAndRefresh(),
+    "caiConnector.cleanUpOrphans": async () => {
+      await cleanUpOrphansFlow(context, output);
+      panel.reconcileAndRefresh();
+    },
+  };
+  for (const [id, handler] of Object.entries(commands)) {
+    context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+  }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.refreshSessions", () => {
-      panel.refresh();
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.killSession", async (item: SessionItem) => {
+  const itemCommands: Record<string, (item: SessionItem) => Promise<void>> = {
+    "caiConnector.killSession": async (item) => {
       output.show(true);
       await killSessionRecord(item.record, context, output);
-      panel.refresh();
-    })
-  );
+    },
+    "caiConnector.joinSession": (item) => joinSessionFlow(item, context, output),
+    "caiConnector.recreateSession": (item) => recreateSessionFlow(item, context, output, panel),
+    "caiConnector.editSession": (item) => editSessionFlow(item, context, output, panel),
+  };
+  for (const [id, handler] of Object.entries(itemCommands)) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(id, async (item: SessionItem) => {
+        await handler(item);
+        panel.reconcileAndRefresh();
+      }),
+    );
+  }
 
+  // Poll endpoint pids only while the view is on screen, and ask CML for the
+  // remote half of each status when it becomes visible.
   context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.joinSession", async (item: SessionItem) => {
-      await joinSessionFlow(item, context, output);
-    })
+    treeView.onDidChangeVisibility(async (e) => {
+      if (!e.visible) {
+        panel.stopPolling();
+        return;
+      }
+      panel.startPolling();
+      panel.reconcileAndRefresh();
+      await refreshFromCml(context, output, panel);
+    }),
   );
+  if (treeView.visible) {
+    panel.startPolling();
+  }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.recreateSession", async (item: SessionItem) => {
-      await recreateSessionFlow(item, context, output, panel);
-    })
-  );
+  void startupCleanup(context, output, panel);
+}
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("caiConnector.editSession", async (item: SessionItem) => {
-      await editSessionFlow(item, context, output, panel);
-    })
-  );
+/**
+ * Reconciles the two halves of every session's status against CML and, unless
+ * the user opted out, stops any session left running there without a local
+ * endpoint.
+ */
+async function refreshFromCml(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  panel: SessionPanel,
+): Promise<void> {
+  const storagePath = context.globalStorageUri.fsPath;
+  try {
+    const cdswctlPath = await ensureCdswctl(output);
+    let changed = await reconcileWithCml(storagePath, cdswctlPath, output);
+    const autoStop = vscode.workspace
+      .getConfiguration("caiConnector")
+      .get<boolean>("autoStopOrphanedSessions", true);
+    if (autoStop) {
+      const stopped = await stopOrphanedCmlSessions(storagePath, cdswctlPath, output);
+      if (stopped > 0) {
+        changed = true;
+        vscode.window.showInformationMessage(
+          `Stopped ${stopped} CML session(s) that had no local endpoint left.`,
+        );
+      }
+    }
+    if (changed) { panel.refresh(); }
+  } catch { /* silent — cached history is still shown */ }
+}
 
-  // Startup orphan cleanup.
-  // Skip entirely if a session from another window is already live (its endpoint PID is still running).
-  output.appendLine(`[startup] vscode.env.remoteName = ${JSON.stringify(vscode.env.remoteName)}`);
-  output.appendLine(`[startup] vscode.env.appHost = ${JSON.stringify(vscode.env.appHost)}`);
+/**
+ * Startup sweep.
+ *
+ * Kills only endpoint processes no stored session claims, which is what makes
+ * several windows able to hold live tunnels at once: a session another window
+ * created is tracked in the shared history file, so this host spares it. The old
+ * "kill every ssh-endpoint unless one looks alive" rule could not tell the
+ * difference.
+ */
+async function startupCleanup(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  panel: SessionPanel,
+): Promise<void> {
+  const storagePath = context.globalStorageUri.fsPath;
+  // Left over from the single-session era; the history file replaced it.
+  clearFile(path.join(storagePath, STATE_FILE));
 
-  const startupHistory = loadHistory(context.globalStorageUri.fsPath);
-  output.appendLine(`[startup] session history count = ${startupHistory.length}`);
-  const activeSessions = startupHistory.filter((r) => r.status === "active");
-  output.appendLine(`[startup] active sessions: ${JSON.stringify(activeSessions.map((r) => ({ id: r.id, pid: r.endpointPid, pidAlive: r.endpointPid != null ? isProcessAlive(r.endpointPid) : false })))}`);
-
-  const liveSession = startupHistory.find(
-    (r) => r.status === "active" && r.endpointPid != null && isProcessAlive(r.endpointPid),
-  );
-  if (liveSession) {
-    output.appendLine(`Skipping startup cleanup: live endpoint detected (PID ${liveSession.endpointPid}).`);
-  } else {
-    killOrphanedEndpointProcesses(output)
-      .then((count) => {
-        if (count > 0) {
-          output.appendLine(`Startup cleanup: killed ${count} orphaned ssh-endpoint process(es).`);
-        }
-      })
-      .catch(() => { /* best-effort */ });
+  try {
+    const { trackedPids } = await reconcileProcesses(storagePath, output);
+    output.appendLine(`[startup] tracked endpoint pids: ${JSON.stringify(trackedPids)}`);
+    const killed = await killUntrackedEndpointProcesses(trackedPids, output);
+    if (killed > 0) {
+      output.appendLine(`Startup cleanup: killed ${killed} untracked ssh-endpoint process(es).`);
+    }
+    syncSshConfigFromHistory(storagePath, output);
+    panel.refresh();
+    warnAboutOrphans(loadHistory(storagePath), output);
+  } catch (err) {
+    output.appendLine(`Startup cleanup failed: ${String(err)}`);
   }
 }
 
 export function deactivate(): void {
-  // Same-window remote open: Remote-SSH still needs the endpoint process — leave it running.
-  // The live-PID check in activate() will protect it from orphan cleanup on the next window load.
-  if (isSurrenderedToSsh()) { return; }
-  const endpoint = getActiveEndpoint();
-  if (!endpoint) { return; }
-  if (endpoint.process.pid) {
-    try { process.kill(endpoint.process.pid); } catch { /* already dead */ }
+  // Every endpoint successfully handed to Remote-SSH is surrendered before the
+  // window opens, so this only ever catches one that was still being created.
+  // Killing a surrendered tunnel would disconnect a window that is mid-reload.
+  for (const endpoint of listEndpoints()) {
+    if (endpoint.surrendered) { continue; }
+    if (endpoint.process.pid) {
+      try { process.kill(endpoint.process.pid); } catch { /* already dead */ }
+    }
+    stopCmlSessions(
+      endpoint.cdswctlPath,
+      endpoint.project,
+      (_msg) => { /* no logging in synchronous deactivate */ },
+      endpoint.sessionId,
+    );
   }
-  stopCmlSessions(
-    endpoint.cdswctlPath,
-    endpoint.project,
-    (_msg) => { /* no logging in synchronous deactivate */ },
-    endpoint.sessionId,
-  );
-  clearFile(endpoint.statePath);
 }
 
 async function resetApiKeyFlow(
@@ -193,4 +213,3 @@ async function clearCacheFlow(
     vscode.window.showInformationMessage("No runtime cache was present.");
   }
 }
-

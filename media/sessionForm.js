@@ -401,9 +401,17 @@
       const right = document.createElement("span");
       right.className = "right";
       const pill = document.createElement("span");
-      const isActive = recent.status === "active";
+      // "error" means the local endpoint and the CML session disagree — most
+      // often a session still running on CML with no tunnel left.
+      const pillText = {
+        active: "running",
+        starting: "starting",
+        error: "needs cleanup",
+        inactive: "stopped",
+      };
+      const isActive = recent.status === "active" || recent.status === "starting";
       pill.className = `pill ${isActive ? "active" : "idle"}`;
-      pill.textContent = isActive ? "running" : recent.status === "error" ? "failed" : "stopped";
+      pill.textContent = pillText[recent.status] || "stopped";
       right.appendChild(pill);
       const when = document.createElement("span");
       when.textContent = isActive && recent.port ? `port ${recent.port}` : relativeTime(recent.startedAt);

@@ -25,6 +25,8 @@ The extension uses `cdswctl` to create a CML SSH endpoint, updates your SSH conf
 5. Fill in the **session form**: project, runtime, and resources are all on one page. Fractional CPU sizes such as `0.5` are supported, and a previous session can be recalled with one click.
 6. Press **Create session** and watch the endpoint come up — VS Code opens a Remote-SSH window automatically.
 
+Run **Connect** again whenever you need another session. Sessions run **in parallel** — several projects, or several sessions in the same project, each in its own window. Connecting never disturbs a session you already have open.
+
 ---
 
 ## Commands
@@ -33,8 +35,9 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`).
 
 | Command | Description |
 |---|---|
-| `CAI Connector: Connect` | Open the session form to create a new CML SSH endpoint and connect to it with Remote-SSH. |
-| `CAI Connector: Disconnect` | Tear down the current endpoint and clean up the SSH config entry. |
+| `CAI Connector: Connect` | Open the session form to create a new CML SSH endpoint and connect to it with Remote-SSH. Existing sessions keep running. |
+| `CAI Connector: Disconnect Sessions` | Tear down sessions and clean up their SSH config entries. With more than one session running, you pick which. |
+| `CAI Connector: Clean Up Orphaned Sessions` | Check every recorded session against CML, stop any that is still running without a local endpoint, and kill leftover endpoint processes. |
 | `CAI Connector: Recreate Last Session` | Reconnect instantly using the same runtime and resource settings as your previous session. |
 | `CAI Connector: Browse Runtimes` | View the list of available CML runtimes (cached locally for speed). |
 | `CAI Connector: Clear Runtime Cache` | Clear the locally cached runtime list and fetch a fresh copy on next connect. |
@@ -88,6 +91,12 @@ These values pre-fill the session form when you run **Connect** or **Recreate La
 |---|---|---|---|
 | `caiConnector.openInSameWindow` | `boolean` | `true` | Open the remote session in the current window instead of a new one. A new window is always used when you are already inside a remote session. |
 
+### Session Cleanup
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `caiConnector.autoStopOrphanedSessions` | `boolean` | `true` | Stop CML sessions whose local SSH endpoint has gone away, so they stop consuming cluster capacity. Only sessions this extension created and that CML confirms are still running are ever stopped. Turn this off to clean up manually with **Clean Up Orphaned Sessions**. |
+
 ### Example `settings.json`
 
 ```json
@@ -105,17 +114,29 @@ These values pre-fill the session form when you run **Connect** or **Recreate La
 ## How It Works
 
 1. **Connect** — the extension spawns `cdswctl ssh-endpoint` as a background process and monitors its output for readiness.
-2. **SSH config** — once the endpoint is ready, the extension writes a `Host cml` block to your SSH config so Remote-SSH can connect without any manual setup.
-3. **Remote-SSH window** — VS Code opens a window connected to `cml` over SSH. You can edit files, run terminals, and use any VS Code extension as if you were on the machine.
-4. **Disconnect** — tears down the endpoint process, stops the CML session it created, removes the SSH config entry, and cleans up state.
+2. **SSH config** — once the endpoint is ready, the extension writes a `Host cml-<project>` block to your SSH config so Remote-SSH can connect without any manual setup. Each session gets its own host name, so several can be reachable at once.
+3. **Remote-SSH window** — VS Code opens a window connected to that host over SSH. You can edit files, run terminals, and use any VS Code extension as if you were on the machine.
+4. **Disconnect** — tears down the endpoint process, stops the CML session it created, removes its SSH config entry, and cleans up state.
 
 The endpoint process keeps running while your remote window is open, including across window reloads. Only the sessions this extension created are ever stopped — other sessions in your CML project are left untouched.
 
-Sessions are **not** shut down automatically after a period of inactivity; use **Disconnect** or **Kill Session** when you are finished.
+Sessions are **not** shut down automatically after a period of inactivity; use **Disconnect Sessions** or **Kill Session** when you are finished.
+
+### Session status
+
+Two things can independently be up or down: the **local SSH endpoint** on your machine, and the **CML session** on the platform. The sidebar shows both, because they can disagree:
+
+| What you see | What it means |
+|---|---|
+| `endpoint up · CML up` | Healthy. Join it. |
+| `endpoint up · CML gone` | The tunnel is still running but the platform ended the session. Kill it and recreate. |
+| `endpoint gone · CML up` | **Orphaned**: the session is still consuming cluster capacity with no way to reach it. Cleaned up automatically, or with **Clean Up Orphaned Sessions**. |
+| `endpoint gone · CML gone` | Stopped. Its settings are kept so you can recreate it. |
+| `CML unchecked` | The platform has not been asked yet. Open the Sessions view to refresh. |
 
 ### Sidebar
 
-The **CAI Connector** activity-bar icon opens a **Sessions** view listing your recent sessions (up to five, one per project) with their runtime, resource allocation, port, and status. From there you can start a new session, join a running one, recreate it with the same settings, or kill it.
+The **CAI Connector** activity-bar icon opens a **Sessions** view listing your recent sessions with their runtime, resource allocation, SSH host, port, and both statuses. From there you can start a new session, join a running one, recreate it with the same settings, or kill it. Sessions started from other VS Code windows appear here too.
 
 ---
 
@@ -143,6 +164,12 @@ Ensure the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms
 
 **Runtimes list is stale or empty**
 Run `CAI Connector: Clear Runtime Cache`, then `CAI Connector: Browse Runtimes` to fetch a fresh list from CML.
+
+**A session shows `endpoint gone · CML up`**
+Its container is still running on the cluster with no local endpoint to reach it. Run `CAI Connector: Clean Up Orphaned Sessions` to stop it, or use **Recreate Session** to get a fresh endpoint for the same configuration.
+
+**Remote-SSH connects to the wrong session**
+Each session has its own host name (`cml-<project>`), shown in the sidebar under **SSH host**. If an older window is still pointing at the bare `cml` host from a previous version of the extension, reconnect it via **Join Session** to move it onto a per-session alias.
 
 ---
 

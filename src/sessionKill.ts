@@ -18,31 +18,35 @@
 import * as vscode from "vscode";
 import { runCdswctl } from "./cdswctl";
 import { resolveAndLogin } from "./auth";
-import { markSessionInactive } from "./sessionHistory";
-import { clearActiveEndpoint, getActiveEndpoint } from "./sessionManager";
-import { setActiveProject } from "./state";
-import { clearFile, getStoragePath, readState } from "./utils";
-import { CDSWCTL_TIMEOUT_MS, SessionRecord, STATE_FILE } from "./types";
+import { forgetEndpoint, getEndpoint } from "./endpointRegistry";
+import { markSessionStopped, patchSession } from "./sessionHistory";
+import { syncSshConfigFromHistory } from "./sessionReconciler";
+import { CDSWCTL_TIMEOUT_MS, SessionRecord } from "./types";
 
+/**
+ * Stops one session: its local tunnel process and the CML session behind it.
+ *
+ * Scoped strictly to the record passed in — other sessions running in parallel
+ * are untouched, and the CML session is always addressed by its own id.
+ */
 export async function killSessionRecord(
   record: SessionRecord,
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
 ): Promise<void> {
+  const storagePath = context.globalStorageUri.fsPath;
   output.appendLine(`Killing session ${record.id} in project ${record.projectName}...`);
 
   if (record.endpointPid) {
     output.appendLine(`Killing cdswctl process (PID ${record.endpointPid})...`);
     try { process.kill(record.endpointPid); } catch { /* already dead */ }
   }
-
-  // If this matches our in-process endpoint, clear it
-  const activeEp = getActiveEndpoint();
-  if (activeEp?.process.pid === record.endpointPid) {
-    clearActiveEndpoint();
-    setActiveProject(null);
+  // Drop it from this host's registry without a second kill.
+  if (getEndpoint(record.id)) {
+    forgetEndpoint(record.id);
   }
 
+  let cmlStopped = false;
   if (record.sessionId) {
     const cdswctlPath = await resolveAndLogin(context, output);
     if (cdswctlPath) {
@@ -53,26 +57,38 @@ export async function killSessionRecord(
         output,
         CDSWCTL_TIMEOUT_MS,
       );
-      if (result.exitCode !== 0) {
-        const combined = result.stdout + result.stderr;
-        if (/unexpected end of JSON/i.test(combined)) {
-          output.appendLine("Session stop returned known cdswctl bug (session likely stopped successfully).");
-        }
+      const combined = result.stdout + result.stderr;
+      if (result.exitCode === 0) {
+        cmlStopped = true;
+      } else if (/unexpected end of JSON/i.test(combined)) {
+        // cdswctl prints this on a successful stop — see AGENTS.md.
+        output.appendLine("Session stop returned known cdswctl bug (session likely stopped successfully).");
+        cmlStopped = true;
+      } else {
+        output.appendLine(`Session stop failed with exit ${result.exitCode} — it may still run on CML.`);
       }
     } else {
       output.appendLine("Skipping remote session cleanup — login failed.");
     }
   } else {
     output.appendLine("No session ID — skipping remote session cleanup.");
+    cmlStopped = true;
   }
 
-  // Clear the state file if it belongs to this session
-  const statePath = getStoragePath(context, STATE_FILE);
-  const currentState = readState(statePath, output);
-  if (currentState?.endpointPid === record.endpointPid) {
-    clearFile(statePath);
+  if (cmlStopped) {
+    markSessionStopped(storagePath, record.id);
+  } else {
+    // Endpoint gone, CML session unaccounted for: leave it flagged so the
+    // orphan sweep picks it up instead of quietly recording it as cleaned up.
+    patchSession(storagePath, record.id, {
+      status: "error",
+      endpointStatus: "stopped",
+      endpointPid: undefined,
+      port: undefined,
+      lastCheckedAt: new Date().toISOString(),
+    });
   }
 
-  markSessionInactive(context.globalStorageUri.fsPath, record.id);
+  syncSshConfigFromHistory(storagePath, output);
   output.appendLine("Session killed.");
 }

@@ -156,23 +156,19 @@ export type EndpointProgressStep =
 
 export type ProgressReporter = (step: EndpointProgressStep, detail?: string) => void;
 
-export type EndpointState = {
-  status: "starting" | "ready" | "error";
-  message?: string;
-  sshCommand?: string;
-  userAndHost?: string;
-  port?: string;
-  sessionId?: string;
-  endpointPid?: number;
-  timestamp: string;
-  // Resource info embedded for session panel reactivity
-  project?: string;
-  runtimeId?: number;
-  addonId?: number | null;
-  cpus?: number;
-  memoryGb?: number;
-  gpus?: number;
-};
+/** Is the local cdswctl tunnel process for this session still running? */
+export type EndpointStatus = "running" | "stopped" | "unknown";
+
+/** Is the session still running on the CML platform? */
+export type CmlStatus = "running" | "stopped" | "unknown";
+
+/**
+ * Roll-up of the two statuses above, used for icons, menus and filtering.
+ * `error` means the two disagree: either a tunnel to a session CML has already
+ * ended, or — the case issue #2 forbids — a CML session left running with no
+ * local endpoint.
+ */
+export type SessionStatus = "starting" | "active" | "inactive" | "error";
 
 export type SessionRecord = {
   id: string;
@@ -182,11 +178,19 @@ export type SessionRecord = {
   cpus: number;
   memoryGb: number;
   gpus: number;
-  status: "active" | "inactive" | "error";
+  status: SessionStatus;
+  /** Local tunnel process. Absent on records written before parallel sessions. */
+  endpointStatus?: EndpointStatus;
+  /** Remote CML session. Absent until a reconcile has asked CML. */
+  cmlStatus?: CmlStatus;
+  /** `Host` alias in ~/.ssh/config owned by this session, e.g. `cml-my-project`. */
+  hostAlias?: string;
   port?: string;
   sessionId?: string;
   endpointPid?: number;
   startedAt: string;
+  /** ISO timestamp of the last reconcile that touched the two statuses. */
+  lastCheckedAt?: string;
 };
 
 // Shared constants
@@ -202,4 +206,14 @@ export const DEFAULT_CPU_PROFILES = [0.5, 1, 2, 4, 8];
 export const DEFAULT_MEMORY_PROFILES = [2, 4, 8, 16, 32];
 export const ENDPOINT_READY_TIMEOUT_MS = 60000;
 export const ENDPOINT_POLL_INTERVAL_MS = 500;
-export const REMOTE_URI = "vscode-remote://ssh-remote+cml/home/cdsw";
+/** Every SSH host alias this extension owns starts with this. */
+export const SSH_HOST_PREFIX = "cml";
+export const REMOTE_PATH = "/home/cdsw";
+/**
+ * Records kept in session_history.json. Only `inactive` records are ever
+ * discarded by the cap — a running session must never fall off the list, or
+ * its endpoint would look untracked and be cleaned up as an orphan.
+ */
+export const MAX_SESSION_RECORDS = 8;
+/** How often the sidebar re-checks endpoint PIDs while it is visible. */
+export const STATUS_POLL_INTERVAL_MS = 10000;

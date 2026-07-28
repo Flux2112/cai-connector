@@ -15,60 +15,49 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as fs from "fs";
 import * as path from "path";
 import * as cp from "child_process";
 import * as vscode from "vscode";
 import { runCdswctl } from "./cdswctl";
-import { resolveAndLogin } from "./auth";
-import { addOrUpdateSession } from "./sessionHistory";
-import { loadLastSession, saveLastSession, setActiveProject } from "./state";
-import { updateSshConfig } from "./sshConfig";
-import { buildEndpointArgs, clearFile, getStoragePath, readState } from "./utils";
 import {
-  CDSWCTL_TIMEOUT_MS, ConnectParams, EndpointProgressStep, EndpointState,
-  ENDPOINT_READY_TIMEOUT_MS, ProgressReporter, REMOTE_URI, STATE_FILE,
+  killEndpoint, registerEndpoint, setSessionId, surrenderEndpoint,
+} from "./endpointRegistry";
+import { addOrUpdateSession, loadHistory, patchSession, takenHostAliases } from "./sessionHistory";
+import { syncSshConfigFromHistory } from "./sessionReconciler";
+import { assignHostAlias, remoteUriFor } from "./sshConfig";
+import { buildEndpointArgs } from "./utils";
+import {
+  CDSWCTL_TIMEOUT_MS, ConnectParams, EndpointProgressStep,
+  ENDPOINT_READY_TIMEOUT_MS, ProgressReporter, SessionRecord,
 } from "./types";
 
-type ActiveEndpoint = {
-  process: cp.ChildProcess;
-  cdswctlPath: string;
+type ReadyInfo = {
+  port: string;
+  userAndHost: string;
   sessionId?: string;
-  project: string;
-  statePath: string;
 };
 
-let activeEndpoint: ActiveEndpoint | null = null;
-// Set to true when we hand the running endpoint off to Remote-SSH in same-window mode.
-// Prevents deactivate() from killing the process that Remote-SSH needs to connect to.
-let surrenderedToSsh = false;
-
-export function getActiveEndpoint(): ActiveEndpoint | null {
-  return activeEndpoint;
-}
-
-export function isSurrenderedToSsh(): boolean {
-  return surrenderedToSsh;
-}
-
-export function clearActiveEndpoint(): void {
-  const ep = activeEndpoint;
-  activeEndpoint = null;
-  if (ep) {
-    if (ep.process.pid) {
-      try { process.kill(ep.process.pid); } catch { /* already dead */ }
-    }
-    clearFile(ep.statePath);
-  }
-}
-
+/**
+ * Creates one SSH endpoint and hands it to Remote-SSH. Every session-creating
+ * flow funnels through here.
+ *
+ * Sessions run in parallel: this touches only the record it creates, and never
+ * kills or stops anything belonging to another session. The single exception is
+ * `params.autoStopSessions`, a specific session id the caller wants replaced.
+ *
+ * Returns the CML session id on success (possibly an empty string if cdswctl
+ * never printed one), or false if the endpoint never came up.
+ */
 export async function executeConnect(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   params: ConnectParams,
   onProgress?: ProgressReporter,
 ): Promise<string | false> {
-  const statePath = getStoragePath(context, STATE_FILE);
+  const storagePath = context.globalStorageUri.fsPath;
+  const id = new Date().toISOString();
+  const hostAlias = assignHostAlias(params.project, takenHostAliases(storagePath));
+
   // A reporting failure must never interrupt endpoint creation, and reporting
   // must stay synchronous so it cannot reorder the handoff sequence below.
   const report = (step: EndpointProgressStep, detail?: string): void => {
@@ -91,12 +80,9 @@ export async function executeConnect(
     report("stopping-previous", `session ${prevSessionId}`);
   }
 
-  output.appendLine("Creating SSH endpoint...");
+  output.appendLine(`Creating SSH endpoint (host alias ${hostAlias})...`);
   const args = buildEndpointArgs(params);
   output.appendLine(`Command: ${params.cdswctlPath} ${args.join(" ")}`);
-
-  clearFile(statePath);
-  try { fs.mkdirSync(path.dirname(statePath), { recursive: true }); } catch { /* already exists */ }
 
   const child = cp.spawn(params.cdswctlPath, args, {
     windowsHide: true,
@@ -108,21 +94,112 @@ export async function executeConnect(
   child.unref();
   report("spawned", child.pid != null ? `pid ${child.pid}` : undefined);
 
-  activeEndpoint = {
+  registerEndpoint({
+    id,
     process: child,
     cdswctlPath: params.cdswctlPath,
-    sessionId: undefined,
     project: params.project,
-    statePath,
-  };
+    hostAlias,
+    surrendered: false,
+  });
 
-  const readyPromise = new Promise<EndpointState | null>((resolve) => {
-    let stdoutBuf = "";
-    let stderrBuf = "";
+  // Record the session the moment the process exists, not when it is ready.
+  // Until this write lands the pid belongs to no session, and any window that
+  // activates during the (up to 60s) startup window would sweep it up as an
+  // untracked orphan and kill the tunnel mid-creation.
+  const record: SessionRecord = {
+    id,
+    projectName: params.project,
+    runtimeId: params.runtimeId,
+    addonId: params.addonId,
+    cpus: params.cpus,
+    memoryGb: params.memory,
+    gpus: params.gpus,
+    status: "starting",
+    endpointStatus: "running",
+    cmlStatus: "unknown",
+    hostAlias,
+    endpointPid: child.pid,
+    startedAt: id,
+  };
+  addOrUpdateSession(storagePath, record);
+
+  const ready = await Promise.race([
+    scrapeEndpoint(child, output, id, storagePath, report),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ENDPOINT_READY_TIMEOUT_MS)),
+  ]);
+
+  if (!ready) {
+    vscode.window.showErrorMessage("Failed to establish SSH endpoint.");
+    await abortSession(storagePath, id, params, output);
+    return false;
+  }
+
+  output.appendLine(`SSH: ${ready.userAndHost}:${ready.port}`);
+
+  // Written before the window opens so the next extension host sees a live,
+  // tracked endpoint and leaves it alone.
+  addOrUpdateSession(storagePath, {
+    ...record,
+    status: "active",
+    endpointStatus: "running",
+    cmlStatus: "running",
+    port: ready.port,
+    sessionId: ready.sessionId,
+    lastCheckedAt: new Date().toISOString(),
+  });
+
+  if (!syncSshConfigFromHistory(storagePath, output)) {
+    vscode.window.showErrorMessage("Failed to update SSH config.");
+    await abortSession(storagePath, id, params, output, ready.sessionId);
+    return false;
+  }
+  report("ssh-config", `host ${hostAlias}`);
+
+  output.appendLine(`SSH config updated. Opening Remote-SSH window for ${hostAlias}...`);
+  // Synchronous and non-awaited, so nothing is inserted into the
+  // history-write / surrender / openFolder sequence below.
+  report("opening-window");
+  const openInSameWindow = vscode.workspace.getConfiguration("caiConnector").get<boolean>("openInSameWindow", true);
+  // Force a new window when already inside a remote session — the current window is being disconnected/replaced
+  const forceNewWindow = !openInSameWindow || Boolean(vscode.env.remoteName);
+  // Always surrender the endpoint before opening the remote window.
+  // In same-window mode the current host is reloaded; in new-window mode it is deactivated.
+  // Either way deactivate() must not kill the cdswctl tunnel that the new window needs.
+  surrenderEndpoint(id);
+  try {
+    await vscode.commands.executeCommand("vscode.openFolder", vscode.Uri.parse(remoteUriFor(hostAlias)), {
+      forceNewWindow,
+    });
+    vscode.window.showInformationMessage(`Remote-SSH window launched for host '${hostAlias}'.`);
+  } catch (err) {
+    output.appendLine(`Remote-SSH handoff failed: ${String(err)}`);
+    vscode.window.showErrorMessage(`Failed to launch Remote-SSH window: ${String(err)}`);
+    return false;
+  }
+  return ready.sessionId ?? "";
+}
+
+/**
+ * Screen-scrapes cdswctl's output for the CML session id and the ready line.
+ *
+ * The session id is written to the history record as soon as it appears, before
+ * the endpoint is ready: if creation then fails or the window dies, that id is
+ * the only handle anyone has on the session CML has already started, and without
+ * it the session would be stranded on the platform.
+ */
+function scrapeEndpoint(
+  child: cp.ChildProcess,
+  output: vscode.OutputChannel,
+  id: string,
+  storagePath: string,
+  report: (step: EndpointProgressStep, detail?: string) => void,
+): Promise<ReadyInfo | null> {
+  return new Promise<ReadyInfo | null>((resolve) => {
     let sessionId: string | undefined;
     let settled = false;
 
-    const done = (val: EndpointState | null): void => {
+    const done = (val: ReadyInfo | null): void => {
       if (!settled) { settled = true; resolve(val); }
     };
 
@@ -133,7 +210,8 @@ export async function executeConnect(
         const m = line.match(/on session\s+(\S+)\s+in project/i);
         if (m) {
           sessionId = m[1];
-          if (activeEndpoint) { activeEndpoint.sessionId = sessionId; }
+          setSessionId(id, sessionId);
+          patchSession(storagePath, id, { sessionId, cmlStatus: "running" });
           report("session-created", `session ${sessionId}`);
         }
       }
@@ -141,56 +219,27 @@ export async function executeConnect(
       if (!settled) {
         const portMatch = line.match(/ssh\s+-p\s+(\d+)\s+(\S+)/);
         if (portMatch) {
-          const port = portMatch[1];
-          const userAndHost = portMatch[2];
-          const state: EndpointState = {
-            status: "ready",
-            sshCommand: `ssh -p ${port} ${userAndHost}`,
-            userAndHost,
-            port,
-            sessionId,
-            endpointPid: child.pid,
-            timestamp: new Date().toISOString(),
-            project: params.project,
-            runtimeId: params.runtimeId,
-            addonId: params.addonId,
-            cpus: params.cpus,
-            memoryGb: params.memory,
-            gpus: params.gpus,
-          };
-          try { fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf8"); } catch { /* ignore */ }
-          report("endpoint-ready", `port ${port}`);
-          done(state);
+          report("endpoint-ready", `port ${portMatch[1]}`);
+          done({ port: portMatch[1], userAndHost: portMatch[2], sessionId });
         }
       }
     };
 
-    child.stdout?.on("data", (data: Buffer) => {
-      stdoutBuf += data.toString();
-      const lines = stdoutBuf.split(/\r?\n/);
-      stdoutBuf = lines.pop() ?? "";
-      lines.filter((l) => l.trim()).forEach((l) => onLine(l.trimEnd(), false));
-    });
-
-    child.stderr?.on("data", (data: Buffer) => {
-      stderrBuf += data.toString();
-      const lines = stderrBuf.split(/\r?\n/);
-      stderrBuf = lines.pop() ?? "";
-      lines.filter((l) => l.trim()).forEach((l) => onLine(l.trimEnd(), true));
-    });
+    const pump = (stream: NodeJS.ReadableStream | null, isErr: boolean): void => {
+      let buf = "";
+      stream?.on("data", (data: Buffer) => {
+        buf += data.toString();
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop() ?? "";
+        lines.filter((l) => l.trim()).forEach((l) => onLine(l.trimEnd(), isErr));
+      });
+    };
+    pump(child.stdout, false);
+    pump(child.stderr, true);
 
     child.on("exit", (code) => {
       output.appendLine(`cdswctl exited with code ${code ?? "unknown"}.`);
-      if (!settled) {
-        const errState: EndpointState = {
-          status: "error",
-          message: `cdswctl exited with code ${code ?? "unknown"} before endpoint was ready.`,
-          endpointPid: child.pid,
-          timestamp: new Date().toISOString(),
-        };
-        try { fs.writeFileSync(statePath, JSON.stringify(errState, null, 2), "utf8"); } catch { /* ignore */ }
-        done(null);
-      }
+      done(null);
     });
 
     child.on("error", (err) => {
@@ -198,125 +247,50 @@ export async function executeConnect(
       done(null);
     });
   });
-
-  const timeoutPromise = new Promise<null>((resolve) =>
-    setTimeout(() => resolve(null), ENDPOINT_READY_TIMEOUT_MS),
-  );
-
-  const state = await Promise.race([readyPromise, timeoutPromise]);
-
-  if (!state || !state.port || !state.userAndHost) {
-    vscode.window.showErrorMessage("Failed to establish SSH endpoint.");
-    clearActiveEndpoint();
-    return false;
-  }
-
-  output.appendLine(`SSH: ${state.userAndHost}:${state.port}`);
-
-  if (!updateSshConfig(state.port)) {
-    vscode.window.showErrorMessage("Failed to update SSH config.");
-    await disconnectFlow(context, output);
-    return false;
-  }
-  report("ssh-config", "host cml");
-
-  // Record the session synchronously before opening the remote window.
-  // This ensures the next extension host's liveSession check finds the alive endpoint PID
-  // and skips killOrphanedEndpointProcesses, which would otherwise kill the tunnel.
-  addOrUpdateSession(context.globalStorageUri.fsPath, {
-    id: state.timestamp,
-    projectName: params.project,
-    runtimeId: params.runtimeId,
-    addonId: params.addonId ?? null,
-    cpus: params.cpus,
-    memoryGb: params.memory,
-    gpus: params.gpus,
-    status: "active",
-    port: state.port,
-    sessionId: state.sessionId,
-    endpointPid: child.pid,
-    startedAt: state.timestamp,
-  });
-
-  output.appendLine("SSH config updated. Opening Remote-SSH window...");
-  // Synchronous and non-awaited, so nothing is inserted into the
-  // history-write / surrenderedToSsh / openFolder sequence below.
-  report("opening-window");
-  const openInSameWindow = vscode.workspace.getConfiguration("caiConnector").get<boolean>("openInSameWindow", true);
-  // Force a new window when already inside a remote session — the current window is being disconnected/replaced
-  const forceNewWindow = !openInSameWindow || Boolean(vscode.env.remoteName);
-  // Always surrender the endpoint before opening the remote window.
-  // In same-window mode the current host is reloaded; in new-window mode it is deactivated.
-  // Either way deactivate() must not kill the cdswctl tunnel that the new window needs.
-  surrenderedToSsh = true;
-  const remoteUri = vscode.Uri.parse(REMOTE_URI);
-  try {
-    await vscode.commands.executeCommand("vscode.openFolder", remoteUri, { forceNewWindow });
-    vscode.window.showInformationMessage("Remote-SSH window launched for host 'cml'.");
-  } catch (err) {
-    output.appendLine(`Remote-SSH handoff failed: ${String(err)}`);
-    vscode.window.showErrorMessage(`Failed to launch Remote-SSH window: ${String(err)}`);
-    return false;
-  }
-  return state.sessionId ?? "";
 }
 
-export async function disconnectFlow(
-  context: vscode.ExtensionContext,
+/**
+ * Tears down a session that failed partway through creation.
+ *
+ * The CML session may already exist even though the endpoint never became
+ * usable, so it is stopped by id rather than merely forgotten — that is exactly
+ * the orphan case issue #2 rules out.
+ */
+async function abortSession(
+  storagePath: string,
+  id: string,
+  params: ConnectParams,
   output: vscode.OutputChannel,
+  sessionId?: string,
 ): Promise<void> {
-  output.show(true);
-  const endpoint = activeEndpoint;
-  const statePath = getStoragePath(context, STATE_FILE);
+  killEndpoint(id);
+  // Re-read: the id may have been scraped after the caller last saw the record.
+  const remoteId = sessionId ?? loadHistory(storagePath).find((r) => r.id === id)?.sessionId;
+  let cmlStatus: "stopped" | "unknown" = "unknown";
 
-  if (endpoint) {
-    const { sessionId, project } = endpoint;
-    if (endpoint.process.pid) {
-      output.appendLine(`Killing cdswctl process (PID ${endpoint.process.pid})...`);
-      try { process.kill(endpoint.process.pid); } catch { /* already dead */ }
-    }
-    clearFile(statePath);
-    activeEndpoint = null;
-    setActiveProject(null);
-
-    // Mark last session as explicitly disconnected so auto-reconnect skips it
-    const lastSession = loadLastSession(context);
-    if (lastSession) {
-      saveLastSession(context, { ...lastSession, disconnectedAt: new Date().toISOString() });
-    }
-
-    if (project && sessionId) {
-      output.appendLine(`Stopping session ${sessionId} in project ${project}...`);
-      const cdswctlPath = await resolveAndLogin(context, output);
-      if (cdswctlPath) {
-        const result = await runCdswctl(
-          cdswctlPath,
-          ["sessions", "stop", "/s", sessionId, "/p", project],
-          output,
-          CDSWCTL_TIMEOUT_MS,
-        );
-        if (result.exitCode !== 0) {
-          const combined = result.stdout + result.stderr;
-          if (/unexpected end of JSON/i.test(combined)) {
-            output.appendLine("Session stop returned known cdswctl bug (session likely stopped successfully).");
-          }
-        }
-      } else {
-        output.appendLine("Skipping remote session cleanup — login failed.");
-      }
+  if (remoteId) {
+    output.appendLine(`Cleaning up half-created CML session ${remoteId}...`);
+    const result = await runCdswctl(
+      params.cdswctlPath,
+      ["sessions", "stop", "/s", remoteId, "/p", params.project],
+      output,
+      CDSWCTL_TIMEOUT_MS,
+    );
+    const combined = result.stdout + result.stderr;
+    if (result.exitCode === 0 || /unexpected end of JSON/i.test(combined)) {
+      cmlStatus = "stopped";
     } else {
-      output.appendLine("No session ID available — skipping session cleanup to avoid stopping unrelated sessions.");
+      output.appendLine(`Could not stop ${remoteId} — it may still be running on CML.`);
     }
-  } else {
-    // Fallback: check state file for a cdswctl PID left over from a previous run
-    const currentState = readState(statePath, output);
-    if (currentState?.endpointPid) {
-      output.appendLine(`Killing orphaned cdswctl (PID ${currentState.endpointPid})...`);
-      try { process.kill(currentState.endpointPid); } catch { /* already dead */ }
-    }
-    clearFile(statePath);
-    output.appendLine("No active endpoint in this session — cleared stale state.");
   }
 
-  vscode.window.showInformationMessage("Disconnected.");
+  patchSession(storagePath, id, {
+    status: cmlStatus === "stopped" ? "inactive" : "error",
+    endpointStatus: "stopped",
+    cmlStatus,
+    endpointPid: undefined,
+    port: undefined,
+    lastCheckedAt: new Date().toISOString(),
+  });
+  syncSshConfigFromHistory(storagePath, output);
 }
