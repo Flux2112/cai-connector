@@ -1,0 +1,43 @@
+# TEMPORARY — delete once the Marketplace publisher member has been added.
+#
+# Prints the Azure DevOps profile ID of the publishing managed identity, which
+# is the value the Marketplace "Add member" dialog wants in its User ID field.
+# The call has to be made *as* the identity, which is only possible after a
+# federated login, so it cannot be run from a workstation.
+#
+# Running this also proves the workload identity federation works end to end,
+# without bumping a version or publishing anything.
+name: Get ADO profile ID (temporary)
+
+on:
+  push:
+    branches: [feat/session-form-webview]
+  workflow_dispatch:
+
+jobs:
+  profile-id:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      - name: Marketplace User ID
+        run: |
+          # Only the id is printed. This repository is public, so the rest of
+          # the profile payload (display name, email address) must stay out of
+          # the log.
+          ID=$(az rest \
+            --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+            --query id -o tsv)
+          echo "::notice title=Marketplace User ID::${ID}"
+          echo "Paste this into the publisher's Add member dialog: ${ID}"
