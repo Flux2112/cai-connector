@@ -169,6 +169,33 @@ Removed: `endpoint_state.json` and everything reading it (`EndpointState`, `read
 
 ---
 
+## The release pipeline changed underneath this branch
+
+Unrelated to issues #1 and #2, but it decides what happens the moment this branch merges, so read it before you merge.
+
+`.github/workflows/publish.yml` no longer authenticates to the Marketplace with `secrets.AZURE_PAT`. Marketplace PATs retire on 1 December 2026, so publishing now uses **Microsoft Entra ID via workload identity federation**: `azure/login@v3` exchanges the runner's GitHub OIDC token (hence the new `permissions: id-token: write`) for an Azure CLI session, and `vsce publish --azure-credential` picks it up through its credential chain, requesting a token for the Azure DevOps resource `499b84ac-1321-427f-aa17-267ca6975798`.
+
+Already set up and verified end to end:
+
+| Piece | Value |
+|---|---|
+| Managed identity | `cai-connector-publisher` in resource group `vscode-publish-rg` |
+| Federated credential | `github-main` → subject `repo:Flux2112/cai-connector:ref:refs/heads/main` |
+| Repo secrets | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` |
+| Marketplace | identity added to the `DefySoftwareSolutions` publisher as **Contributor** |
+
+The same identity also publishes the `livy-sessions` extension — same publisher, so one membership covers both and each repo carries its own federated credential.
+
+Three things worth knowing when this bites:
+
+- **Trust is per branch.** The subject must match `refs/heads/main` exactly. Microsoft's own documentation warns that a mismatched subject fails the token exchange **silently**. A publish that stalls on auth with nothing useful in the log means the subject, not the role.
+- **The credential check runs before the version bump**, deliberately. A broken federation costs a red run rather than a bumped version and a pushed tag with no release behind them.
+- **`AZURE_PAT` still exists** on the repo and is no longer read by anything. Delete it once a release has published green.
+
+Still true: **merging to `main` is a release.** What changed is only how that release authenticates.
+
+Pre-existing and untouched: the bump/commit/tag steps still run before packaging, so a failure *after* the credential check leaves a pushed tag with no Marketplace release. Worth reordering some day; out of scope here.
+
 ## Reverting
 
 Less separable than issue #1 — the four changes depend on each other. The realistic fallback is reverting the whole issue #2 commit and keeping the webview work.
