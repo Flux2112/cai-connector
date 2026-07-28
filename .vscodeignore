@@ -6,6 +6,10 @@ src/**
 .gitignore
 tsconfig.json
 AGENTS.md
+CLAUDE.md
+docs/**
+.agents/**
+skills-lock.json
 node_modules/**
 *.vsix
 *-original.png

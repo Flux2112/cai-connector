@@ -60,6 +60,34 @@ export function addOrUpdateSession(storagePath: string, record: SessionRecord): 
   saveHistory(storagePath, records);
 }
 
+export type SessionConfigPatch = {
+  projectName: string;
+  runtimeId: number;
+  addonId: number | null;
+  cpus: number;
+  memoryGb: number;
+  gpus: number;
+};
+
+/**
+ * Rewrites the configuration of one stored session, leaving its status, port and
+ * endpoint PID alone. Returns false when the record no longer exists.
+ *
+ * Renaming the project can collide with another record, so the one-per-project
+ * invariant is re-applied in favour of the record being edited.
+ */
+export function updateSessionConfig(storagePath: string, id: string, patch: SessionConfigPatch): boolean {
+  const records = loadHistory(storagePath);
+  const target = records.find(r => r.id === id);
+  if (!target) {
+    return false;
+  }
+  Object.assign(target, patch);
+  const deduped = records.filter(r => r.id === id || r.projectName !== patch.projectName);
+  saveHistory(storagePath, deduped);
+  return true;
+}
+
 export function markSessionInactive(storagePath: string, id: string): void {
   const records = loadHistory(storagePath);
   const rec = records.find(r => r.id === id);

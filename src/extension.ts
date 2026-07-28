@@ -25,6 +25,7 @@ import { loadHistory, refreshSessionStatusesFromCml } from "./sessionHistory";
 import { disconnectFlow, getActiveEndpoint, isSurrenderedToSsh } from "./sessionManager";
 import { SessionPanel, SessionItem } from "./sessionPanel";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
+import { editSessionFlow } from "./sessionEdit";
 import { killSessionRecord } from "./sessionKill";
 import { RuntimeManager } from "./runtimeManager";
 import { clearFile, isProcessAlive, stopCmlSessions } from "./utils";
@@ -117,7 +118,13 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Startup orphan cleanup + auto-reconnect.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.editSession", async (item: SessionItem) => {
+      await editSessionFlow(item, context, output, panel);
+    })
+  );
+
+  // Startup orphan cleanup.
   // Skip entirely if a session from another window is already live (its endpoint PID is still running).
   output.appendLine(`[startup] vscode.env.remoteName = ${JSON.stringify(vscode.env.remoteName)}`);
   output.appendLine(`[startup] vscode.env.appHost = ${JSON.stringify(vscode.env.appHost)}`);
@@ -131,7 +138,7 @@ export function activate(context: vscode.ExtensionContext): void {
     (r) => r.status === "active" && r.endpointPid != null && isProcessAlive(r.endpointPid),
   );
   if (liveSession) {
-    output.appendLine(`Skipping startup cleanup and auto-reconnect: live endpoint detected (PID ${liveSession.endpointPid}).`);
+    output.appendLine(`Skipping startup cleanup: live endpoint detected (PID ${liveSession.endpointPid}).`);
   } else {
     killOrphanedEndpointProcesses(output)
       .then((count) => {
@@ -139,10 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
           output.appendLine(`Startup cleanup: killed ${count} orphaned ssh-endpoint process(es).`);
         }
       })
-      .catch(() => { /* best-effort */ })
-      .finally(() => {
-        output.appendLine("[auto-reconnect] SKIPPED — automatic session recreation is disabled");
-      });
+      .catch(() => { /* best-effort */ });
   }
 }
 

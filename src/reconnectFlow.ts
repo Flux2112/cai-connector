@@ -28,16 +28,13 @@ import { getStoragePath } from "./utils";
 export async function reconnectFlow(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
-  silent = false,
 ): Promise<void> {
   if (process.platform !== "win32") {
     vscode.window.showErrorMessage("CAI Connector is Windows-only right now.");
     return;
   }
 
-  if (!silent) {
-    output.show(true);
-  }
+  output.show(true);
 
   const lastSession = loadLastSession(context);
   if (!lastSession) {

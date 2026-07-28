@@ -23,10 +23,6 @@ import { getStoragePath } from "./utils";
 
 let activeProject: string | null = null;
 
-export function getActiveProject(): string | null {
-  return activeProject;
-}
-
 export function setActiveProject(project: string | null): void {
   activeProject = project;
 }

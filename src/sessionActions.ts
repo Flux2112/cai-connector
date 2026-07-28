@@ -24,7 +24,7 @@ import { clearActiveEndpoint, executeConnect } from "./sessionManager";
 import { SessionItem } from "./sessionPanel";
 import { updateSshConfig } from "./sshConfig";
 import { saveLastSession, setActiveProject } from "./state";
-import { ConnectParams, REMOTE_URI } from "./types";
+import { ConnectParams, REMOTE_URI, SessionRecord } from "./types";
 import { isProcessAlive } from "./utils";
 
 export async function joinSessionFlow(
@@ -61,7 +61,7 @@ export async function joinSessionFlow(
 }
 
 export async function recreateSessionFlow(
-  item: SessionItem,
+  item: { record: SessionRecord },
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   panel: { refresh(): void },

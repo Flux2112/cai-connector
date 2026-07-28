@@ -24,10 +24,10 @@ import { resolveAndLogin } from "./auth";
 import { addOrUpdateSession } from "./sessionHistory";
 import { loadLastSession, saveLastSession, setActiveProject } from "./state";
 import { updateSshConfig } from "./sshConfig";
-import { buildEndpointArgs, clearFile, getStoragePath, readState, stopCmlSessions } from "./utils";
+import { buildEndpointArgs, clearFile, getStoragePath, readState } from "./utils";
 import {
-  CDSWCTL_TIMEOUT_MS, ConnectParams, EndpointState,
-  ENDPOINT_READY_TIMEOUT_MS, REMOTE_URI, STATE_FILE,
+  CDSWCTL_TIMEOUT_MS, ConnectParams, EndpointProgressStep, EndpointState,
+  ENDPOINT_READY_TIMEOUT_MS, ProgressReporter, REMOTE_URI, STATE_FILE,
 } from "./types";
 
 type ActiveEndpoint = {
@@ -66,8 +66,18 @@ export async function executeConnect(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
   params: ConnectParams,
+  onProgress?: ProgressReporter,
 ): Promise<string | false> {
   const statePath = getStoragePath(context, STATE_FILE);
+  // A reporting failure must never interrupt endpoint creation, and reporting
+  // must stay synchronous so it cannot reorder the handoff sequence below.
+  const report = (step: EndpointProgressStep, detail?: string): void => {
+    try {
+      onProgress?.(step, detail);
+    } catch (err) {
+      output.appendLine(`Progress reporting failed: ${String(err)}`);
+    }
+  };
 
   if (params.autoStopSessions !== false) {
     const prevSessionId = params.autoStopSessions;
@@ -78,6 +88,7 @@ export async function executeConnect(
       output,
       CDSWCTL_TIMEOUT_MS,
     );
+    report("stopping-previous", `session ${prevSessionId}`);
   }
 
   output.appendLine("Creating SSH endpoint...");
@@ -95,6 +106,7 @@ export async function executeConnect(
   });
 
   child.unref();
+  report("spawned", child.pid != null ? `pid ${child.pid}` : undefined);
 
   activeEndpoint = {
     process: child,
@@ -122,6 +134,7 @@ export async function executeConnect(
         if (m) {
           sessionId = m[1];
           if (activeEndpoint) { activeEndpoint.sessionId = sessionId; }
+          report("session-created", `session ${sessionId}`);
         }
       }
 
@@ -146,6 +159,7 @@ export async function executeConnect(
             gpus: params.gpus,
           };
           try { fs.writeFileSync(statePath, JSON.stringify(state, null, 2), "utf8"); } catch { /* ignore */ }
+          report("endpoint-ready", `port ${port}`);
           done(state);
         }
       }
@@ -204,6 +218,7 @@ export async function executeConnect(
     await disconnectFlow(context, output);
     return false;
   }
+  report("ssh-config", "host cml");
 
   // Record the session synchronously before opening the remote window.
   // This ensures the next extension host's liveSession check finds the alive endpoint PID
@@ -224,6 +239,9 @@ export async function executeConnect(
   });
 
   output.appendLine("SSH config updated. Opening Remote-SSH window...");
+  // Synchronous and non-awaited, so nothing is inserted into the
+  // history-write / surrenderedToSsh / openFolder sequence below.
+  report("opening-window");
   const openInSameWindow = vscode.workspace.getConfiguration("caiConnector").get<boolean>("openInSameWindow", true);
   // Force a new window when already inside a remote session — the current window is being disconnected/replaced
   const forceNewWindow = !openInSameWindow || Boolean(vscode.env.remoteName);
@@ -301,12 +319,4 @@ export async function disconnectFlow(
   }
 
   vscode.window.showInformationMessage("Disconnected.");
-}
-
-export function stopCmlSessionsSync(
-  cdswctlPath: string,
-  project: string,
-  sessionId: string | undefined,
-): void {
-  stopCmlSessions(cdswctlPath, project, (_msg) => { /* no-op in deactivate */ }, sessionId);
 }
