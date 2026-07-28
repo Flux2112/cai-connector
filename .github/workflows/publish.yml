@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Lets the runner mint a GitHub OIDC token, which Entra ID exchanges for
+      # an access token. This is what replaces the long-lived Marketplace PAT.
+      id-token: write
 
     steps:
       - name: Checkout
@@ -27,6 +30,26 @@ jobs:
 
       - name: Compile
         run: npm run compile
+
+      # Signs the Azure CLI in via workload identity federation: no secret is
+      # stored, the runner proves its identity with a short-lived OIDC token.
+      # No subscription is needed — publishing only requires a token for the
+      # Azure DevOps resource, not access to any Azure resource group.
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # Fails fast with a readable error if the federation or the Marketplace
+      # role assignment is wrong, rather than after the version has been bumped
+      # and tagged. Prints only the expiry, never the token.
+      - name: Verify Marketplace credential
+        run: |
+          az account get-access-token \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+            --query expiresOn -o tsv
 
       - name: Bump version
         run: npm version minor --no-git-tag-version
@@ -48,8 +71,10 @@ jobs:
       - name: Package
         run: npm run package
 
+      # vsce resolves an Entra ID token through its credential chain, which
+      # picks up the Azure CLI session established above. Requires vsce >= 2.26.1.
       - name: Publish
-        run: npx vsce publish --pat ${{ secrets.AZURE_PAT }}
+        run: npx vsce publish --azure-credential
 
       - name: Upload artifact
         if: always()

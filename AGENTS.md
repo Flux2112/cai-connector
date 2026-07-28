@@ -35,6 +35,8 @@ Debug the extension with the **Run Extension** launch config (`.vscode/launch.js
 
 **CI publishes on every push to `main`** (`.github/workflows/publish.yml`): bumps the minor version, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then `vsce publish` to the Marketplace. Treat any merge to `main` as a release.
 
+Publishing authenticates with **Microsoft Entra ID via workload identity federation**, not a PAT — Marketplace PATs retire on 1 December 2026. `azure/login@v2` exchanges GitHub's OIDC token (hence `permissions: id-token: write`) for an Azure CLI session, and `vsce publish --azure-credential` picks it up through its credential chain (`EnvironmentCredential` → `AzureCliCredential` → …), requesting a token for the Azure DevOps resource `499b84ac-1321-427f-aa17-267ca6975798`. Only `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are stored, and neither is a secret in the usual sense. No subscription is involved, so the login sets `allow-no-subscriptions`. Note the upstream docs describe this for **Azure Pipelines** (an `AzureCLI@2` task against an ADO service connection); the GitHub Actions form here is an adaptation of the same mechanism.
+
 ## Architecture
 
 `extension.ts` is a thin registration layer: it wires commands to `*Flow` functions, builds the `SessionPanel` tree view, and runs startup orphan cleanup. All real work lives in the flow modules, and **every endpoint creation funnels through `executeConnect` in `sessionManager.ts`** — `connectFlow`, `reconnectFlow` (recreate from `last_session.json`), and `recreateSessionFlow` (recreate from a sidebar item) each build a `ConnectParams` and call it.
