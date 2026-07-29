@@ -18,6 +18,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as cp from "child_process";
+import * as net from "net";
 import * as vscode from "vscode";
 import { ConnectParams } from "./types";
 
@@ -44,7 +45,30 @@ export function clearFile(filePath: string): void {
   }
 }
 
-export function buildEndpointArgs(params: ConnectParams): string[] {
+export function findAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    const onError = (err: Error): void => reject(err);
+    server.once("error", onError);
+    server.listen(0, () => {
+      const address = server.address();
+      server.removeListener("error", onError);
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not determine an available local port.")));
+        return;
+      }
+      server.close((err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(address.port);
+        }
+      });
+    });
+  });
+}
+
+export function buildEndpointArgs(params: ConnectParams, localPort?: number): string[] {
   const args = [
     "ssh-endpoint",
     "-p",
@@ -60,6 +84,9 @@ export function buildEndpointArgs(params: ConnectParams): string[] {
   ];
   if (params.addonId !== null) {
     args.push(`--addons=${String(params.addonId)}`);
+  }
+  if (localPort !== undefined) {
+    args.push("--port", String(localPort));
   }
   return args;
 }

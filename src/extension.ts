@@ -175,7 +175,7 @@ async function startupCleanup(
   try {
     const { trackedPids } = await reconcileProcesses(storagePath, output);
     output.appendLine(`[startup] tracked endpoint pids: ${JSON.stringify(trackedPids)}`);
-    const killed = await killUntrackedEndpointProcesses(trackedPids, output);
+    const killed = await killUntrackedEndpointProcesses(storagePath, output);
     if (killed > 0) {
       output.appendLine(`Startup cleanup: killed ${killed} untracked ssh-endpoint process(es).`);
     }

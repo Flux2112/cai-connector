@@ -17,7 +17,9 @@
 
 import * as assert from "assert";
 import { test } from "node:test";
-import { normalizeProjectName, runtimeLabel, validateSessionForm } from "../sessionFormModel";
+import {
+  normalizeProjectName, projectOverviewUrl, resourcePrefill, runtimeLabel, validateSessionForm,
+} from "../sessionFormModel";
 import { RuntimeData } from "../types";
 
 const CTX = {
@@ -133,6 +135,24 @@ test("rejects a payload that is not an object", () => {
 test("only a literal true enables saveAsDefaults", () => {
   assert.strictEqual((validateSessionForm({ ...VALID, saveAsDefaults: "yes" }, CTX) as { values: { saveAsDefaults: boolean } }).values.saveAsDefaults, false);
   assert.strictEqual((validateSessionForm({ ...VALID, saveAsDefaults: true }, CTX) as { values: { saveAsDefaults: boolean } }).values.saveAsDefaults, true);
+});
+
+test("uses configured resources for a new session instead of the last session", () => {
+  const lastSessionResources = { cpus: 0.5, memoryGb: 2, gpus: 0 };
+  const configuredDefaults = { cpus: 0.5, memoryGb: 16, gpus: 0 };
+  assert.deepStrictEqual(resourcePrefill("create", lastSessionResources, configuredDefaults), configuredDefaults);
+});
+
+test("builds the project overview URL from the configured CML URL", () => {
+  assert.strictEqual(
+    projectOverviewUrl("https://oenbml.apps.anucdp-cml-master-01.w.oenb.co.at/"),
+    "https://oenbml.apps.anucdp-cml-master-01.w.oenb.co.at/projects",
+  );
+});
+
+test("does not expose an invalid or unsafe configured CML URL as a project link", () => {
+  assert.strictEqual(projectOverviewUrl("not a URL"), null);
+  assert.strictEqual(projectOverviewUrl("file:///C:/"), null);
 });
 
 test("builds a readable runtime label", () => {

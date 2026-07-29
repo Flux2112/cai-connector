@@ -44,8 +44,8 @@ export async function cleanUpOrphansFlow(
     return;
   }
 
-  const { trackedPids } = await reconcileProcesses(storagePath, output);
-  const killedProcesses = await killUntrackedEndpointProcesses(trackedPids, output);
+  await reconcileProcesses(storagePath, output);
+  const killedProcesses = await killUntrackedEndpointProcesses(storagePath, output);
   await reconcileWithCml(storagePath, cdswctlPath, output);
   const stoppedSessions = await stopOrphanedCmlSessions(storagePath, cdswctlPath, output);
   syncSshConfigFromHistory(storagePath, output);

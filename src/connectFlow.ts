@@ -20,8 +20,7 @@ import { resolveAndLogin } from "./auth";
 import { RuntimeManager } from "./runtimeManager";
 import { pickRuntime, filterLatestRuntimes } from "./runtimePicker";
 import { SessionFormPanel } from "./sessionForm";
-import { buildSessionFormInit, refreshRuntimes } from "./sessionFormData";
-import { reconcileProcesses } from "./sessionReconciler";
+import { openNewSessionForm } from "./sessionFormPreparation";
 import { executeConnect } from "./sessionManager";
 import { saveLastSession } from "./state";
 import { CACHE_FILE, SessionFormValues } from "./types";
@@ -32,30 +31,8 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
     vscode.window.showErrorMessage("CAI Connector is Windows-only right now.");
     return;
   }
-
-  output.show(true);
-
-  // Sessions run in parallel now, so connecting must not disturb anything that
-  // is already running. This only refreshes what we know about existing
-  // endpoints; it never kills one and never stops a CML session.
-  await reconcileProcesses(context.globalStorageUri.fsPath, output);
-
-  // The API key prompt stays a native input box — no secret ever reaches the webview.
-  const cdswctlPath = await resolveAndLogin(context, output);
-  if (!cdswctlPath) {
-    return;
-  }
-
-  const init = await buildSessionFormInit(context, output, cdswctlPath, "create");
-  if (!init) {
-    return;
-  }
-
-  SessionFormPanel.show(context, output, init, {
-    onRefreshRuntimes: () => refreshRuntimes(context, output, cdswctlPath),
-    onSubmit: async (values, panel) => {
-      await launchSession(context, output, cdswctlPath, values, panel);
-    },
+  await openNewSessionForm(context, output, async (cdswctlPath, values, panel) => {
+    await launchSession(context, output, cdswctlPath, values, panel);
   });
 }
 

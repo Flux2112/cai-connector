@@ -20,8 +20,12 @@ import * as vscode from "vscode";
 import { ensureCdswctl, runCdswctl } from "./cdswctl";
 import { SECRET_KEY, CDSWCTL_TIMEOUT_MS } from "./types";
 
+export async function getStoredApiKey(context: vscode.ExtensionContext): Promise<string | null> {
+  return (await context.secrets.get(SECRET_KEY)) || null;
+}
+
 export async function getApiKey(context: vscode.ExtensionContext): Promise<string | null> {
-  const stored = await context.secrets.get(SECRET_KEY);
+  const stored = await getStoredApiKey(context);
   if (stored) {
     return stored;
   }
@@ -70,6 +74,7 @@ export async function ensureLoggedIn(
   context: vscode.ExtensionContext,
   cdswctlPath: string,
   output: vscode.OutputChannel,
+  suppliedApiKey?: string,
 ): Promise<boolean> {
   const config = vscode.workspace.getConfiguration("caiConnector");
   let cmlUrl = config.get<string>("cmlUrl", "");
@@ -84,9 +89,12 @@ export async function ensureLoggedIn(
   }
   const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
 
-  const apiKey = await getApiKey(context);
+  const apiKey = suppliedApiKey ?? await getApiKey(context);
   if (!apiKey) {
     return false;
+  }
+  if (suppliedApiKey) {
+    await context.secrets.store(SECRET_KEY, suppliedApiKey);
   }
 
   const loginResult = await runCdswctl(
@@ -110,6 +118,7 @@ export async function ensureLoggedIn(
 export async function resolveAndLogin(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
+  suppliedApiKey?: string,
 ): Promise<string | null> {
   const config = vscode.workspace.getConfiguration("caiConnector");
   const cdswctlPathSetting = config.get<string>("cdswctlPath", "");
@@ -122,7 +131,7 @@ export async function resolveAndLogin(
     return null;
   }
 
-  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output);
+  const loggedIn = await ensureLoggedIn(context, cdswctlPath, output, suppliedApiKey);
   if (!loggedIn) {
     return null;
   }

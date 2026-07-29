@@ -216,7 +216,14 @@
     const hint = $("projectHint");
     hint.textContent = "";
     if (!raw) {
-      hint.textContent = "Enter the project name you see in CML.";
+      hint.append(document.createTextNode("Enter the "));
+      const path = document.createElement("code");
+      path.textContent = "USER/PROJECT";
+      hint.append(path, document.createTextNode(" path from the CML project URL, for example "));
+      const example = document.createElement("code");
+      example.textContent = "owner/my-project";
+      hint.append(example, document.createTextNode(". Do not use the project display name."));
+      appendProjectsLink(hint);
       return;
     }
     if (raw.includes("/")) {
@@ -224,6 +231,7 @@
       const code = document.createElement("code");
       code.textContent = raw;
       hint.append(code, document.createTextNode("."));
+      appendProjectsLink(hint);
       return;
     }
     hint.append(document.createTextNode("Connecting to "));
@@ -233,6 +241,19 @@
     const alt = document.createElement("code");
     alt.textContent = `owner/${raw}`;
     hint.append(alt, document.createTextNode(" for someone else's project."));
+    appendProjectsLink(hint);
+  }
+
+  function appendProjectsLink(hint) {
+    if (!init.projectsUrl) {
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = init.projectsUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = "Open CML projects";
+    hint.append(document.createTextNode(" "), link);
   }
 
   function syncChips(groupId, input) {
@@ -539,6 +560,32 @@
     banner.hidden = false;
   }
 
+  function showApiKeyPrompt(message) {
+    $("formView").hidden = true;
+    $("formFooter").hidden = true;
+    $("progressView").hidden = true;
+    $("apiKeyView").hidden = false;
+    $("apiKeyMsg").textContent = message || "";
+    $("apiKeyMsg").className = message ? "msg error" : "msg";
+    $("apiKey").value = "";
+    $("apiKeySubmit").disabled = false;
+    $("apiKeySubmit").textContent = "Continue";
+    $("apiKey").focus();
+  }
+
+  function submitApiKey() {
+    const apiKey = $("apiKey").value.trim();
+    if (!apiKey) {
+      showApiKeyPrompt("Enter your CML API key.");
+      return;
+    }
+    $("apiKeySubmit").disabled = true;
+    $("apiKeySubmit").textContent = "Connecting…";
+    vscode.postMessage({ type: "submitApiKey", apiKey });
+    // The extension host receives a structured clone; keep no key in the page.
+    $("apiKey").value = "";
+  }
+
   function submit() {
     if ($("submitBtn").disabled) {
       return;
@@ -665,6 +712,12 @@
       case "banner":
         showBanner(message.message ? [message.message] : null);
         break;
+      case "requestApiKey":
+        showApiKeyPrompt(null);
+        break;
+      case "apiKeyError":
+        showApiKeyPrompt(message.message);
+        break;
       case "invalid":
         showBanner(message.errors);
         resetSubmit();
@@ -732,6 +785,13 @@
 
   $("submitBtn").addEventListener("click", submit);
   $("cancelBtn").addEventListener("click", () => vscode.postMessage({ type: "cancel" }));
+  $("apiKeySubmit").addEventListener("click", submitApiKey);
+  $("apiKeyCancel").addEventListener("click", () => vscode.postMessage({ type: "cancel" }));
+  $("apiKey").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submitApiKey();
+    }
+  });
   $("progressCancel").addEventListener("click", () => vscode.postMessage({ type: "cancel" }));
   for (const id of ["bannerOutput", "progressOutput"]) {
     $(id).addEventListener("click", () => vscode.postMessage({ type: "showOutput" }));

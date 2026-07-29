@@ -114,6 +114,7 @@ code {
 
 /* ---------- controls ---------- */
 input[type="text"],
+input[type="password"],
 input[type="number"] {
   font-family: inherit;
   font-size: 13px;
@@ -424,6 +425,16 @@ legend {
 
 .checkbox-row input {
   accent-color: var(--accent);
+}
+
+.credential {
+  max-width: 520px;
+  padding-bottom: 26px;
+}
+
+.credential-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* ---------- banner ---------- */
