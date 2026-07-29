@@ -11,5 +11,9 @@ docs/**
 .agents/**
 skills-lock.json
 node_modules/**
+tools/**
+**/node_modules/**
+media/cai-connector-side.png
+media/cai-connector-logo.png
 *.vsix
 *-original.png

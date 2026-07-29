@@ -157,6 +157,12 @@ The only UI code in the repo. `media/sessionForm.{css,js}` are **plain CSS and E
 - Activation is lazy (contributed commands + the sidebar view). There is no `activationEvents` array; VS Code infers it.
 - There is **no idle monitor and no auto-reconnect**. Both were removed along with the detached `endpointHost.ts` helper in commit `cdad9fa`; the endpoint now runs as a child of the extension host. Do not reference `endpointHost.ts`, `endpointHostUtils.ts`, or `idleMonitor.ts` — they no longer exist.
 
+### The activity-bar icon
+
+`media/cai-sidebar.svg` is **generated**, not hand-authored — do not edit it directly. It is traced from `media/cai-connector-side.png` by `tools/icon-trace/` (`npm install && npm run build` in that directory), which also emits `media/cai-sidebar-mark.svg`, the same mark without the CAI wordmark. `tools/icon-trace` is a private package with its own dependencies and is excluded from the VSIX by `.vscodeignore`, so the extension keeps its zero-runtime-dependency rule.
+
+Two things to know before touching the icon: the SVG's `viewBox="0 0 24 24"` + `currentColor` + no-explicit-opacity config is copied from a previously shipped icon and is known to work — VS Code recolours the icon and applies its own 60%/100% opacity, so never bake in a colour. And judge any change at **24px**, not at a large preview; everything looks fine at 96px. `docs/icon-tracing.md` has the full rationale plus two non-obvious facts about the artwork (the terminal window has no right edge; the cloud's right lobe is not a circle).
+
 ## Code Style
 
 - Double quotes, semicolons, 2-space indent, trailing commas in multi-line literals.
