@@ -49,6 +49,11 @@
           "command": "caiConnector.refreshSessions",
           "when": "view == caiConnector.sessionsView",
           "group": "navigation"
+        },
+        {
+          "command": "caiConnector.cleanUpOrphans",
+          "when": "view == caiConnector.sessionsView",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -59,17 +64,22 @@
         },
         {
           "command": "caiConnector.recreateSession",
-          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|inactive|orphan)Session$/",
           "group": "inline"
         },
         {
-          "command": "caiConnector.recreateSession",
-          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
+          "command": "caiConnector.editSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|inactive|orphan)Session$/",
           "group": "inline"
         },
         {
           "command": "caiConnector.killSession",
-          "when": "view == caiConnector.sessionsView && viewItem == activeSession",
+          "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|orphan)Session$/",
+          "group": "inline"
+        },
+        {
+          "command": "caiConnector.removeSession",
+          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
           "group": "inline"
         }
       ]
@@ -83,8 +93,14 @@
       },
       {
         "command": "caiConnector.disconnect",
-        "title": "Disconnect",
+        "title": "Disconnect Sessions",
         "category": "CAI Connector"
+      },
+      {
+        "command": "caiConnector.cleanUpOrphans",
+        "title": "Clean Up Orphaned Sessions",
+        "category": "CAI Connector",
+        "icon": "$(clear-all)"
       },
       {
         "command": "caiConnector.browseRuntimes",
@@ -129,6 +145,18 @@
         "title": "Kill Session",
         "category": "CAI Connector",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "caiConnector.editSession",
+        "title": "Edit Session Configuration",
+        "category": "CAI Connector",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "caiConnector.removeSession",
+        "title": "Remove Session Entry",
+        "category": "CAI Connector",
+        "icon": "$(trash)"
       }
     ],
     "configuration": {
@@ -147,14 +175,44 @@
         "caiConnector.defaultCpus": {
           "type": "number",
           "default": 2,
-          "minimum": 1,
-          "description": "Default CPU count."
+          "exclusiveMinimum": 0,
+          "description": "Default CPU count. Fractional values are allowed when your platform deploys fractional CPU profiles, for example 0.5."
         },
         "caiConnector.defaultMemoryGb": {
           "type": "number",
           "default": 4,
-          "minimum": 1,
-          "description": "Default memory in GB."
+          "exclusiveMinimum": 0,
+          "description": "Default memory in GB. Fractional values are allowed, for example 0.5."
+        },
+        "caiConnector.cpuProfiles": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "default": [
+            0.5,
+            1,
+            2,
+            4,
+            8
+          ],
+          "description": "CPU profile sizes offered as one-click choices in the session form. Set this to the profiles your platform actually deploys. Values outside this list are still accepted, with a warning."
+        },
+        "caiConnector.memoryProfiles": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "default": [
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "description": "Memory sizes in GB offered as one-click choices in the session form."
         },
         "caiConnector.defaultGpus": {
           "type": "number",
@@ -168,26 +226,20 @@
           "minimum": 1,
           "description": "Runtime cache duration in hours."
         },
-        "caiConnector.idleTimeoutMinutes": {
-          "type": "number",
-          "default": 30,
-          "minimum": 0,
-          "description": "Minutes of SSH inactivity before the endpoint auto-shuts down. Set to 0 to disable idle shutdown."
-        },
         "caiConnector.latestRuntimesOnly": {
           "type": "boolean",
           "default": true,
           "description": "When enabled, only the latest version of each runtime (grouped by editor, kernel, and edition) is shown in the runtime picker."
         },
+        "caiConnector.autoStopOrphanedSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop CML sessions this extension created once their local SSH endpoint is gone. Only sessions recorded in the extension's own history are ever stopped, and only ones CML confirms are still running. Disable this to clean up manually with 'Clean Up Orphaned Sessions'."
+        },
         "caiConnector.openInSameWindow": {
           "type": "boolean",
           "default": true,
           "description": "When enabled, the remote SSH session opens in the current window instead of a new window."
-        },
-        "caiConnector.autoReconnect": {
-          "type": "boolean",
-          "default": true,
-          "description": "When enabled, automatically reconnects to the last session on VS Code startup."
         }
       }
     }

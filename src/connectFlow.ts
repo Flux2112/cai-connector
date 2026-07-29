@@ -15,16 +15,17 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as os from "os";
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
-import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon, filterLatestRuntimes } from "./runtimePicker";
-import { clearActiveEndpoint, executeConnect } from "./sessionManager";
-import { loadLastSession, saveLastSession, setActiveProject } from "./state";
-import { CACHE_FILE } from "./types";
-import { getStoragePath, promptResources } from "./utils";
+import { pickRuntime, filterLatestRuntimes } from "./runtimePicker";
+import { SessionFormPanel } from "./sessionForm";
+import { buildSessionFormInit, refreshRuntimes } from "./sessionFormData";
+import { reconcileProcesses } from "./sessionReconciler";
+import { executeConnect } from "./sessionManager";
+import { saveLastSession } from "./state";
+import { CACHE_FILE, SessionFormValues } from "./types";
+import { getStoragePath } from "./utils";
 
 export async function connectFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {
   if (process.platform !== "win32") {
@@ -34,94 +35,88 @@ export async function connectFlow(context: vscode.ExtensionContext, output: vsco
 
   output.show(true);
 
-  const config = vscode.workspace.getConfiguration("caiConnector");
-  const defaultCpus = config.get<number>("defaultCpus", 2);
-  const defaultMemoryGb = config.get<number>("defaultMemoryGb", 4);
-  const defaultGpus = config.get<number>("defaultGpus", 0);
-  const cacheHours = config.get<number>("cacheHours", 24);
-  const latestRuntimesOnly = config.get<boolean>("latestRuntimesOnly", true);
+  // Sessions run in parallel now, so connecting must not disturb anything that
+  // is already running. This only refreshes what we know about existing
+  // endpoints; it never kills one and never stops a CML session.
+  await reconcileProcesses(context.globalStorageUri.fsPath, output);
 
-  const cachePath = getStoragePath(context, CACHE_FILE);
-
-  clearActiveEndpoint();
-  const _killedOrphans = await killOrphanedEndpointProcesses(output);
-  output.appendLine(`Orphan cleanup: ${_killedOrphans} orphaned ssh-endpoint process(es).`);
-
+  // The API key prompt stays a native input box — no secret ever reaches the webview.
   const cdswctlPath = await resolveAndLogin(context, output);
   if (!cdswctlPath) {
     return;
   }
 
-  const projectName = await vscode.window.showInputBox({
-    title: "Project Name",
-    prompt: "Enter your CML project name (or owner/project for another user's project)",
-    ignoreFocusOut: true,
+  const init = await buildSessionFormInit(context, output, cdswctlPath, "create");
+  if (!init) {
+    return;
+  }
+
+  SessionFormPanel.show(context, output, init, {
+    onRefreshRuntimes: () => refreshRuntimes(context, output, cdswctlPath),
+    onSubmit: async (values, panel) => {
+      await launchSession(context, output, cdswctlPath, values, panel);
+    },
   });
-  if (!projectName) {
+}
+
+/**
+ * Runs a submitted form. The panel stays open to show progress and is disposed
+ * only after executeConnect returns, so the endpoint handoff is never delayed
+ * by UI teardown.
+ */
+async function launchSession(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+  cdswctlPath: string,
+  values: SessionFormValues,
+  panel: SessionFormPanel,
+): Promise<void> {
+  if (values.saveAsDefaults) {
+    const config = vscode.workspace.getConfiguration("caiConnector");
+    await config.update("defaultCpus", values.cpus, vscode.ConfigurationTarget.Global);
+    await config.update("defaultMemoryGb", values.memoryGb, vscode.ConfigurationTarget.Global);
+    await config.update("defaultGpus", values.gpus, vscode.ConfigurationTarget.Global);
+    output.appendLine(`Saved default resources: ${values.cpus} CPU, ${values.memoryGb} GB, ${values.gpus} GPU.`);
+  }
+
+  output.appendLine(`Connecting to project ${values.project}...`);
+
+  // Never stop anything on a plain connect. A second session in a project the
+  // user already has open is now a supported thing to want, and the previous
+  // behaviour of stopping the last session made that impossible. Recreate and
+  // Kill remain the explicit ways to end a session.
+  const sessionId = await executeConnect(
+    context,
+    output,
+    {
+      project: values.project,
+      runtimeId: values.runtimeId,
+      addonId: values.addonId,
+      cpus: values.cpus,
+      memory: values.memoryGb,
+      gpus: values.gpus,
+      cdswctlPath,
+      autoStopSessions: false,
+    },
+    (step, detail) => panel.reportProgress(step, detail),
+  );
+
+  if (sessionId === false) {
+    panel.reportFailure("The endpoint did not come up. Check the output for what cdswctl reported.");
     return;
   }
 
-  const runtimeManager = new RuntimeManager(cachePath, cacheHours);
-  const success = await runtimeManager.fetchRuntimes(cdswctlPath, false, output);
-  if (!success) {
-    vscode.window.showErrorMessage("Failed to fetch runtimes. Check output for details.");
-    return;
-  }
-
-  const runtimeList = latestRuntimesOnly ? filterLatestRuntimes(runtimeManager.getAll()) : runtimeManager.getAll();
-  const runtime = await pickRuntime(runtimeList);
-  if (!runtime) {
-    return;
-  }
-
-  const addons = await fetchRuntimeAddons(cdswctlPath, output);
-  if (!addons) {
-    return;
-  }
-  const addon = await pickRuntimeAddon(addons);
-  if (addon === undefined) {
-    return;
-  }
-
-  const resources = await promptResources(defaultCpus, defaultMemoryGb, defaultGpus);
-  if (!resources) {
-    return;
-  }
-
-  const username = (process.env["USERNAME"] || os.userInfo().username).toLowerCase();
-  const project = projectName.includes("/") ? projectName : `${username}/${projectName}`;
-  setActiveProject(project);
-
-  output.appendLine(`Connecting to project ${project}...`);
-
-  // Auto-stop only the known extension-owned session for this project, if any
-  const lastSession = loadLastSession(context);
-  const autoStopSessions =
-    lastSession?.projectName === project && lastSession.sessionId ? lastSession.sessionId : false;
-
-  const sessionId = await executeConnect(context, output, {
-    project,
-    runtimeId: runtime.id,
-    addonId: addon?.id ?? null,
-    cpus: resources.cpus,
-    memory: resources.memoryGb,
-    gpus: resources.gpus,
-    cdswctlPath,
-    autoStopSessions,
+  saveLastSession(context, {
+    projectName: values.project,
+    runtimeId: values.runtimeId,
+    addonId: values.addonId,
+    cpus: values.cpus,
+    memoryGb: values.memoryGb,
+    gpus: values.gpus,
+    sessionId: sessionId || undefined,
+    timestamp: new Date().toISOString(),
   });
-
-  if (sessionId !== false) {
-    saveLastSession(context, {
-      projectName: project,
-      runtimeId: runtime.id,
-      addonId: addon?.id ?? null,
-      cpus: resources.cpus,
-      memoryGb: resources.memoryGb,
-      gpus: resources.gpus,
-      sessionId: sessionId || undefined,
-      timestamp: new Date().toISOString(),
-    });
-  }
+  panel.dispose();
 }
 
 export async function browseRuntimesFlow(context: vscode.ExtensionContext, output: vscode.OutputChannel): Promise<void> {

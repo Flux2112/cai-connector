@@ -17,27 +17,24 @@
 
 import * as vscode from "vscode";
 import { resolveAndLogin } from "./auth";
-import { killOrphanedEndpointProcesses } from "./endpointManager";
 import { RuntimeManager } from "./runtimeManager";
 import { pickRuntime, fetchRuntimeAddons, pickRuntimeAddon } from "./runtimePicker";
-import { clearActiveEndpoint, executeConnect } from "./sessionManager";
-import { loadLastSession, saveLastSession, setActiveProject } from "./state";
+import { reconcileProcesses } from "./sessionReconciler";
+import { executeConnect } from "./sessionManager";
+import { loadLastSession, saveLastSession } from "./state";
 import { CACHE_FILE } from "./types";
 import { getStoragePath } from "./utils";
 
 export async function reconnectFlow(
   context: vscode.ExtensionContext,
   output: vscode.OutputChannel,
-  silent = false,
 ): Promise<void> {
   if (process.platform !== "win32") {
     vscode.window.showErrorMessage("CAI Connector is Windows-only right now.");
     return;
   }
 
-  if (!silent) {
-    output.show(true);
-  }
+  output.show(true);
 
   const lastSession = loadLastSession(context);
   if (!lastSession) {
@@ -49,11 +46,9 @@ export async function reconnectFlow(
   const cacheHours = config.get<number>("cacheHours", 24);
   const cachePath = getStoragePath(context, CACHE_FILE);
 
-  clearActiveEndpoint();
-  const _killedOrphans = await killOrphanedEndpointProcesses(output);
-  if (_killedOrphans > 0) {
-    output.appendLine(`Orphan cleanup: ${_killedOrphans} ssh-endpoint process(es).`);
-  }
+  // Refresh what we know about existing endpoints without disturbing them —
+  // the recreated session joins whatever is already running.
+  await reconcileProcesses(context.globalStorageUri.fsPath, output);
 
   const cdswctlPath = await resolveAndLogin(context, output);
   if (!cdswctlPath) {
@@ -100,8 +95,6 @@ export async function reconnectFlow(
       addonId = pickedAddon?.id ?? null;
     }
   }
-
-  setActiveProject(lastSession.projectName);
 
   output.appendLine(`Reconnecting to project ${lastSession.projectName}...`);
 

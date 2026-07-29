@@ -25,6 +25,7 @@ export class RuntimeManager {
   private cachePath: string;
   private cacheDurationMs: number;
   private runtimes: RuntimeData[] = [];
+  private fromCache = false;
 
   constructor(cachePath: string, cacheHours: number) {
     this.cachePath = cachePath;
@@ -33,6 +34,11 @@ export class RuntimeManager {
 
   public getAll(): RuntimeData[] {
     return this.runtimes;
+  }
+
+  /** True when the loaded list came from the TTL cache rather than from cdswctl. */
+  public wasFromCache(): boolean {
+    return this.fromCache;
   }
 
   public clear(): boolean {
@@ -51,9 +57,11 @@ export class RuntimeManager {
   public async fetchRuntimes(cdswctlPath: string, forceRefresh: boolean, output: vscode.OutputChannel): Promise<boolean> {
     if (!forceRefresh && this.loadCacheIfValid()) {
       output.appendLine(`Loaded ${this.runtimes.length} runtimes from cache.`);
+      this.fromCache = true;
       return true;
     }
 
+    this.fromCache = false;
     output.appendLine("Fetching runtimes from cdswctl...");
     const result = await runCdswctl(cdswctlPath, ["runtimes", "list"], output, 30000);
     if (result.exitCode !== 0) {

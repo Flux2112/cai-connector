@@ -1,5 +1,13 @@
 # Plan: Per-Session CML Cleanup on Endpoint Shutdown
 
+> **Historical — superseded.** This plan targets the detached-helper architecture
+> (`endpointHost.ts`, `endpointHostUtils.ts`, `idleMonitor.ts`), all of which were removed in
+> commit `cdad9fa`. The endpoint now runs as a child of the extension host and there is no idle
+> monitor. Its durable outcomes — parsing the CML session ID from `cdswctl` output, per-session
+> `sessions stop /s <id>` instead of the blanket `/a` flag, and tolerating the
+> `unexpected end of JSON input` bug — survive in `sessionManager.ts`, `sessionKill.ts`, and
+> `utils.ts`. Do not treat the file layout or line references below as current.
+
 **TL;DR:** CML sessions are not being stopped when the VS Code remote session ends because of a critical execution-order bug and missing cleanup paths in the detached helper process. The fix involves: (1) parsing the CML session ID from `cdswctl` output, (2) creating a centralized `shutdown()` function with session-stop logic, (3) wiring it into **all** exit paths (idle timeout, 10-hour timeout, SIGTERM), and (4) switching from the blanket `/a` flag to per-session stop (`/s <SESSION_ID>`). The per-session stop command has a known `cdswctl` bug where it outputs "unexpected end of JSON input" despite succeeding — this must be handled gracefully.
 
 ---
