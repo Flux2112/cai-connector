@@ -32,6 +32,8 @@ import { SessionPanel, SessionItem } from "./sessionPanel";
 import { joinSessionFlow, recreateSessionFlow } from "./sessionActions";
 import { editSessionFlow } from "./sessionEdit";
 import { killSessionRecord } from "./sessionKill";
+import { removeSessionFlow } from "./sessionRemove";
+import { commonWorkspaceAuthority, isRecordInRemoteWorkspace } from "./remoteSession";
 import { RuntimeManager } from "./runtimeManager";
 import { clearFile, stopCmlSessions } from "./utils";
 import { CACHE_FILE, SECRET_KEY, STATE_FILE } from "./types";
@@ -70,13 +72,10 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   const itemCommands: Record<string, (item: SessionItem) => Promise<void>> = {
-    "caiConnector.killSession": async (item) => {
-      output.show(true);
-      await killSessionRecord(item.record, context, output);
-    },
     "caiConnector.joinSession": (item) => joinSessionFlow(item, context, output),
     "caiConnector.recreateSession": (item) => recreateSessionFlow(item, context, output, panel),
     "caiConnector.editSession": (item) => editSessionFlow(item, context, output, panel),
+    "caiConnector.removeSession": (item) => removeSessionFlow(item, context, output, panel),
   };
   for (const [id, handler] of Object.entries(itemCommands)) {
     context.subscriptions.push(
@@ -86,6 +85,24 @@ export function activate(context: vscode.ExtensionContext): void {
       }),
     );
   }
+  context.subscriptions.push(
+    vscode.commands.registerCommand("caiConnector.killSession", async (item: SessionItem) => {
+      output.show(true);
+      const authorities = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.authority);
+      const authority = commonWorkspaceAuthority(authorities, vscode.workspace.workspaceFile?.authority);
+      const closeCurrentWindow = isRecordInRemoteWorkspace(item.record, authority);
+
+      await killSessionRecord(item.record, context, output);
+      panel.reconcileAndRefresh();
+
+      if (closeCurrentWindow) {
+        void vscode.commands.executeCommand("workbench.action.closeWindow").then(
+          undefined,
+          (err) => output.appendLine(`Failed to close stopped Remote-SSH window: ${String(err)}`),
+        );
+      }
+    }),
+  );
 
   // Poll endpoint pids only while the view is on screen, and ask CML for the
   // remote half of each status when it becomes visible.

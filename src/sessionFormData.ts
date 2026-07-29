@@ -19,7 +19,7 @@ import * as os from "os";
 import * as vscode from "vscode";
 import { RuntimeManager } from "./runtimeManager";
 import { fetchRuntimeAddons, filterLatestRuntimes } from "./runtimePicker";
-import { loadHistory } from "./sessionHistory";
+import { loadHistory, recentSessionRecords } from "./sessionHistory";
 import { runtimeLabel } from "./sessionFormModel";
 import { loadLastSession } from "./state";
 import { getStoragePath } from "./utils";
@@ -117,7 +117,7 @@ export async function buildSessionFormInit(
     username: currentUsername(),
     runtimes,
     addons,
-    recents: mode === "edit" ? [] : toRecents(history, runtimes, addons),
+    recents: mode === "edit" ? [] : toRecents(recentSessionRecords(history), runtimes, addons),
     cpuProfiles: profiles("cpuProfiles", DEFAULT_CPU_PROFILES),
     memoryProfiles: profiles("memoryProfiles", DEFAULT_MEMORY_PROFILES),
     latestRuntimesOnly,

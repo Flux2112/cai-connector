@@ -50,8 +50,9 @@ These commands act on a session selected in the **Sessions** sidebar and are als
 |---|---|
 | `CAI Connector: Join Session` | Open a Remote-SSH window into an already-running session. |
 | `CAI Connector: Recreate Session` | Stop the session and start a fresh one with the same runtime and resources. |
-| `CAI Connector: Kill Session` | Stop the endpoint process and the remote CML session. |
+| `CAI Connector: Kill Session` | Stop the endpoint process and the remote CML session. When used for the session backing the current Remote-SSH window, that window closes after cleanup. |
 | `CAI Connector: Edit Session Configuration` | Change the runtime, addon, or resources stored for a session. A running session is offered a recreate, since resources only change when the container restarts. |
+| `CAI Connector: Remove Session Entry` | Remove a stopped session's saved configuration and SSH host entry. |
 
 ---
 
@@ -118,7 +119,7 @@ These values pre-fill the session form when you run **Connect** or **Recreate La
 3. **Remote-SSH window** — VS Code opens a window connected to that host over SSH. You can edit files, run terminals, and use any VS Code extension as if you were on the machine.
 4. **Disconnect** — tears down the endpoint process, stops the CML session it created, removes its SSH config entry, and cleans up state.
 
-The endpoint process keeps running while your remote window is open, including across window reloads. Only the sessions this extension created are ever stopped — other sessions in your CML project are left untouched.
+The endpoint process keeps running while your remote window is open, including across window reloads. **Kill Session** always stops only its selected endpoint and CML session; when you use it for the session backing the current Remote-SSH window, that window closes after cleanup. Only the sessions this extension created are ever stopped — other sessions in your CML project are left untouched.
 
 Sessions are **not** shut down automatically after a period of inactivity; use **Disconnect Sessions** or **Kill Session** when you are finished.
 
@@ -136,7 +137,7 @@ Two things can independently be up or down: the **local SSH endpoint** on your m
 
 ### Sidebar
 
-The **CAI Connector** activity-bar icon opens a **Sessions** view listing your recent sessions with their runtime, resource allocation, SSH host, port, and both statuses. From there you can start a new session, join a running one, recreate it with the same settings, or kill it. Sessions started from other VS Code windows appear here too.
+The **CAI Connector** activity-bar icon opens a **Sessions** view listing your recent sessions with their runtime, resource allocation, SSH host, port, and both statuses. From there you can start a new session, join a running one, recreate it with the same settings, or kill it. Stopped entries can be removed when you no longer need their saved configuration. Sessions started from other VS Code windows appear here too.
 
 ---
 

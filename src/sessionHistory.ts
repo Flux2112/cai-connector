@@ -18,7 +18,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { capRecords } from "./sessionStatus";
-import { HISTORY_FILE, SessionRecord } from "./types";
+import { HISTORY_FILE, MAX_FORM_RECENTS, SessionRecord } from "./types";
 
 export function loadHistory(storagePath: string): SessionRecord[] {
   const file = path.join(storagePath, HISTORY_FILE);
@@ -43,6 +43,16 @@ export function saveHistory(storagePath: string, records: SessionRecord[]): void
 }
 
 /**
+ * Returns the newest saved configurations for the session form without
+ * changing the persisted history order. An empty history is valid on first use.
+ */
+export function recentSessionRecords(records: SessionRecord[]): SessionRecord[] {
+  return [...records]
+    .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt))
+    .slice(0, MAX_FORM_RECENTS);
+}
+
+/**
  * Inserts a new session or merges into the existing record with the same id.
  *
  * Sessions run in parallel, so this deliberately touches nothing else: no
@@ -59,6 +69,21 @@ export function addOrUpdateSession(storagePath: string, record: SessionRecord): 
   const index = records.findIndex((r) => r.id === record.id);
   if (index >= 0) {
     records[index] = { ...records[index], ...record };
+  } else {
+    records.unshift(record);
+  }
+  saveHistory(storagePath, records);
+}
+
+/**
+ * Replaces one record without retaining any stale endpoint or CML handles.
+ * Used when an explicit recreation reuses the same sidebar entry.
+ */
+export function replaceSessionRecord(storagePath: string, record: SessionRecord): void {
+  const records = loadHistory(storagePath);
+  const index = records.findIndex((entry) => entry.id === record.id);
+  if (index >= 0) {
+    records[index] = record;
   } else {
     records.unshift(record);
   }
@@ -122,4 +147,15 @@ export function markSessionStopped(storagePath: string, id: string): void {
     port: undefined,
     lastCheckedAt: new Date().toISOString(),
   });
+}
+
+/** Removes a stopped session's saved configuration. Live entries are never removable. */
+export function removeInactiveSession(storagePath: string, id: string): boolean {
+  const records = loadHistory(storagePath);
+  const target = records.find((record) => record.id === id);
+  if (!target || target.status !== "inactive") {
+    return false;
+  }
+  saveHistory(storagePath, records.filter((record) => record.id !== id));
+  return true;
 }

@@ -60,6 +60,8 @@ export type ConnectParams = {
   cdswctlPath: string;
   // string = specific CML session ID to stop (extension-owned); false = skip
   autoStopSessions: string | false;
+  /** Reuse this stopped history record for an explicit sidebar recreation. */
+  replaceRecord?: { id: string; hostAlias?: string };
 };
 
 export type ResourceInput = {
@@ -215,5 +217,7 @@ export const REMOTE_PATH = "/home/cdsw";
  * its endpoint would look untracked and be cleaned up as an orphan.
  */
 export const MAX_SESSION_RECORDS = 8;
+/** Number of saved configurations offered for one-click recall in the session form. */
+export const MAX_FORM_RECENTS = 3;
 /** How often the sidebar re-checks endpoint PIDs while it is visible. */
 export const STATUS_POLL_INTERVAL_MS = 10000;

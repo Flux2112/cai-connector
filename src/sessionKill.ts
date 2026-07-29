@@ -37,15 +37,6 @@ export async function killSessionRecord(
   const storagePath = context.globalStorageUri.fsPath;
   output.appendLine(`Killing session ${record.id} in project ${record.projectName}...`);
 
-  if (record.endpointPid) {
-    output.appendLine(`Killing cdswctl process (PID ${record.endpointPid})...`);
-    try { process.kill(record.endpointPid); } catch { /* already dead */ }
-  }
-  // Drop it from this host's registry without a second kill.
-  if (getEndpoint(record.id)) {
-    forgetEndpoint(record.id);
-  }
-
   let cmlStopped = false;
   if (record.sessionId) {
     const cdswctlPath = await resolveAndLogin(context, output);
@@ -73,6 +64,17 @@ export async function killSessionRecord(
   } else {
     output.appendLine("No session ID — skipping remote session cleanup.");
     cmlStopped = true;
+  }
+
+  // Keep a current Remote-SSH window connected until the CML stop completes,
+  // then remove the tunnel for this record so no local endpoint is left behind.
+  if (record.endpointPid) {
+    output.appendLine(`Killing cdswctl process (PID ${record.endpointPid})...`);
+    try { process.kill(record.endpointPid); } catch { /* already dead */ }
+  }
+  // Drop it from this host's registry without a second kill.
+  if (getEndpoint(record.id)) {
+    forgetEndpoint(record.id);
   }
 
   if (cmlStopped) {

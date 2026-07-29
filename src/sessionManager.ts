@@ -22,7 +22,9 @@ import { runCdswctl } from "./cdswctl";
 import {
   killEndpoint, registerEndpoint, setSessionId, surrenderEndpoint,
 } from "./endpointRegistry";
-import { addOrUpdateSession, loadHistory, patchSession, takenHostAliases } from "./sessionHistory";
+import {
+  addOrUpdateSession, loadHistory, patchSession, replaceSessionRecord, takenHostAliases,
+} from "./sessionHistory";
 import { syncSshConfigFromHistory } from "./sessionReconciler";
 import { assignHostAlias, remoteUriFor } from "./sshConfig";
 import { buildEndpointArgs } from "./utils";
@@ -55,8 +57,10 @@ export async function executeConnect(
   onProgress?: ProgressReporter,
 ): Promise<string | false> {
   const storagePath = context.globalStorageUri.fsPath;
-  const id = new Date().toISOString();
-  const hostAlias = assignHostAlias(params.project, takenHostAliases(storagePath));
+  const startedAt = new Date().toISOString();
+  const id = params.replaceRecord?.id ?? startedAt;
+  const hostAlias = params.replaceRecord?.hostAlias
+    ?? assignHostAlias(params.project, takenHostAliases(storagePath));
 
   // A reporting failure must never interrupt endpoint creation, and reporting
   // must stay synchronous so it cannot reorder the handoff sequence below.
@@ -120,9 +124,13 @@ export async function executeConnect(
     cmlStatus: "unknown",
     hostAlias,
     endpointPid: child.pid,
-    startedAt: id,
+    startedAt,
   };
-  addOrUpdateSession(storagePath, record);
+  if (params.replaceRecord) {
+    replaceSessionRecord(storagePath, record);
+  } else {
+    addOrUpdateSession(storagePath, record);
+  }
 
   const ready = await Promise.race([
     scrapeEndpoint(child, output, id, storagePath, report),

@@ -107,6 +107,7 @@ export async function recreateSessionFlow(
     gpus: record.gpus,
     cdswctlPath,
     autoStopSessions,
+    replaceRecord: { id: record.id, hostAlias: record.hostAlias },
   };
 
   output.appendLine(`Recreating session for project ${record.projectName}...`);

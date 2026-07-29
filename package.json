@@ -76,6 +76,11 @@
           "command": "caiConnector.killSession",
           "when": "view == caiConnector.sessionsView && viewItem =~ /^(active|orphan)Session$/",
           "group": "inline"
+        },
+        {
+          "command": "caiConnector.removeSession",
+          "when": "view == caiConnector.sessionsView && viewItem == inactiveSession",
+          "group": "inline"
         }
       ]
     },
@@ -146,6 +151,12 @@
         "title": "Edit Session Configuration",
         "category": "CAI Connector",
         "icon": "$(edit)"
+      },
+      {
+        "command": "caiConnector.removeSession",
+        "title": "Remove Session Entry",
+        "category": "CAI Connector",
+        "icon": "$(trash)"
       }
     ],
     "configuration": {

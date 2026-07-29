@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import {
   addOrUpdateSession, loadHistory, markSessionStopped, patchSession, saveHistory,
-  takenHostAliases, updateSessionConfig,
+  recentSessionRecords, removeInactiveSession, replaceSessionRecord, takenHostAliases, updateSessionConfig,
 } from "../sessionHistory";
 import { HISTORY_FILE, SessionRecord } from "../types";
 
@@ -52,6 +52,24 @@ describe("loadHistory", () => {
   });
 });
 
+describe("recentSessionRecords", () => {
+  it("returns an empty list on first use", () => {
+    assert.deepEqual(recentSessionRecords([]), []);
+  });
+
+  it("returns only the three newest records without changing the input order", () => {
+    const records = [
+      record({ id: "oldest", startedAt: "2026-01-01T00:00:00.000Z" }),
+      record({ id: "newest", startedAt: "2026-01-04T00:00:00.000Z" }),
+      record({ id: "second", startedAt: "2026-01-03T00:00:00.000Z" }),
+      record({ id: "third", startedAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+
+    assert.deepEqual(recentSessionRecords(records).map((entry) => entry.id), ["newest", "second", "third"]);
+    assert.deepEqual(records.map((entry) => entry.id), ["oldest", "newest", "second", "third"]);
+  });
+});
+
 describe("addOrUpdateSession", () => {
   it("keeps several sessions in the same project", () => {
     addOrUpdateSession(storagePath, record({ id: "a" }));
@@ -80,6 +98,37 @@ describe("addOrUpdateSession", () => {
     assert.equal(stored.length, 1);
     assert.equal(stored[0].status, "inactive");
     assert.equal(stored[0].sessionId, "sess-1");
+  });
+});
+
+describe("replaceSessionRecord", () => {
+  it("keeps one record and clears handles from the prior session", () => {
+    addOrUpdateSession(storagePath, record({
+      id: "recreated",
+      status: "inactive",
+      hostAlias: "cml-project",
+      port: "2222",
+      sessionId: "old-cml-session",
+      endpointPid: 1234,
+    }));
+
+    replaceSessionRecord(storagePath, record({
+      id: "recreated",
+      status: "starting",
+      endpointStatus: "running",
+      cmlStatus: "unknown",
+      hostAlias: "cml-project",
+      endpointPid: 5678,
+      startedAt: "2026-01-02T00:00:00.000Z",
+    }));
+
+    const stored = loadHistory(storagePath);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].id, "recreated");
+    assert.equal(stored[0].hostAlias, "cml-project");
+    assert.equal(stored[0].endpointPid, 5678);
+    assert.equal(stored[0].sessionId, undefined);
+    assert.equal(stored[0].port, undefined);
   });
 });
 
@@ -174,6 +223,23 @@ describe("markSessionStopped", () => {
     assert.equal(stored.cmlStatus, "stopped");
     assert.equal(stored.endpointPid, undefined);
     assert.equal(stored.port, undefined);
+  });
+});
+
+describe("removeInactiveSession", () => {
+  it("removes only the selected stopped session entry", () => {
+    addOrUpdateSession(storagePath, record({ id: "stopped", status: "inactive" }));
+    addOrUpdateSession(storagePath, record({ id: "live", status: "active" }));
+
+    assert.equal(removeInactiveSession(storagePath, "stopped"), true);
+    assert.deepEqual(loadHistory(storagePath).map((entry) => entry.id), ["live"]);
+  });
+
+  it("refuses to remove a live session entry", () => {
+    addOrUpdateSession(storagePath, record({ id: "live", status: "active" }));
+
+    assert.equal(removeInactiveSession(storagePath, "live"), false);
+    assert.deepEqual(loadHistory(storagePath).map((entry) => entry.id), ["live"]);
   });
 });
 
