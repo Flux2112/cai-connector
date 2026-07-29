@@ -16,7 +16,7 @@
  */
 
 import { parseNumeric, validateCpus, validateGpus, validateMemoryGb } from "./resourceInput";
-import { RuntimeAddonData, RuntimeData, SessionFormValues } from "./types";
+import { ResourceInput, RuntimeAddonData, RuntimeData, SessionFormMode, SessionFormValues } from "./types";
 
 export type SessionFormContext = {
   username: string;
@@ -62,9 +62,34 @@ export function addonLabel(addon: RuntimeAddonData): string {
   return addon.displayName;
 }
 
+/** Uses global defaults for a new form; saved resources belong only to an edit form. */
+export function resourcePrefill(
+  mode: SessionFormMode,
+  savedResources: ResourceInput | undefined,
+  defaults: ResourceInput,
+): ResourceInput {
+  return mode === "edit" && savedResources ? savedResources : defaults;
+}
+
+/** Returns the Projects page for a valid configured CML base URL. */
+export function projectOverviewUrl(cmlUrl: string): string | null {
+  try {
+    const url = new URL(cmlUrl.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    url.search = "";
+    url.hash = "";
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/projects`;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function projectError(raw: unknown): string | null {
   if (typeof raw !== "string" || raw.trim() === "") {
-    return "Enter the project name you see in CML.";
+    return "Enter the USER/PROJECT path from the CML project URL.";
   }
   const name = raw.trim();
   const parts = name.split("/");

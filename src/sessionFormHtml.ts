@@ -73,7 +73,7 @@ export function renderSessionFormHtml(webview: vscode.Webview, mediaRoot: vscode
     <section class="group">
       <div class="group-head"><span class="group-title">Project</span></div>
       <div class="field">
-        <label for="project">Project name</label>
+        <label for="project">Project URL path</label>
         <input type="text" id="project" list="projectList" autocomplete="off" spellcheck="false"
                aria-describedby="projectHint" />
         <datalist id="projectList"></datalist>
@@ -159,6 +159,24 @@ export function renderSessionFormHtml(webview: vscode.Webview, mediaRoot: vscode
         Use these resources as my defaults for new sessions
       </label>
     </section>
+  </main>
+
+  <main class="shell credential" id="apiKeyView" hidden>
+    <h1>Connect to Cloudera AI</h1>
+    <p class="subhead">Enter an API key to continue.</p>
+    <section class="group">
+      <div class="field">
+        <label for="apiKey">CML API key</label>
+        <input type="password" id="apiKey" autocomplete="off" spellcheck="false"
+               aria-describedby="apiKeyHint apiKeyMsg" />
+        <span class="hint" id="apiKeyHint">The key is stored in VS Code Secret Storage and is never written to settings.</span>
+        <span class="msg" id="apiKeyMsg"></span>
+      </div>
+    </section>
+    <div class="credential-actions">
+      <button type="button" class="btn btn-primary" id="apiKeySubmit">Continue</button>
+      <button type="button" class="btn btn-secondary" id="apiKeyCancel">Cancel</button>
+    </div>
   </main>
 
   <div class="footer" id="formFooter">

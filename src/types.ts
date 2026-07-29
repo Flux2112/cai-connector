@@ -106,6 +106,7 @@ export type SessionFormInit = {
   latestRuntimesOnly: boolean;
   runtimesFromCache: boolean;
   readyTimeoutMs: number;
+  projectsUrl: string | null;
   prefill: ResourceInput & { project: string; runtimeId: number | null; addonId: number | null };
   editTarget: { id: string; projectName: string; status: SessionRecord["status"] } | null;
 };
@@ -138,11 +139,14 @@ export type HostToWebviewMessage =
       summary: SessionFormSummary;
     }
   | { type: "failed"; message: string }
-  | { type: "banner"; message: string | null };
+    | { type: "banner"; message: string | null }
+    | { type: "requestApiKey" }
+    | { type: "apiKeyError"; message: string };
 
 export type WebviewToHostMessage =
   | { type: "ready" }
   | { type: "submit"; payload: unknown }
+    | { type: "submitApiKey"; apiKey: string }
   | { type: "cancel" }
   | { type: "refreshRuntimes" }
   | { type: "showOutput" };

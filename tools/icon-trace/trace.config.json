@@ -1,0 +1,39 @@
+{
+  "source": "../../media/cai-connector-side.png",
+  "outDir": "../../media",
+  "workDir": "build",
+
+  "potrace": {
+    "threshold": 128,
+    "turdSize": 60,
+    "optCurve": true,
+    "optTolerance": 1.0,
+    "alphaMax": 1.334
+  },
+
+  "_regions": "Bounding boxes in SOURCE pixel space, used to classify traced subpaths. A subpath matches a region when its own bbox satisfies every bound the region specifies, so a region may be a half-plane (y0 only) or a full box. Re-derive these with `npm run inspect` if the artwork ever changes.",
+  "regions": {
+    "wordmark": { "y0": 570 },
+    "sshPill": { "x0": 418, "x1": 700, "y0": 380, "y1": 530 }
+  },
+
+  "_variants": "Each entry is one emitted SVG. `drop` lists regions whose subpaths are removed before reframing.",
+  "variants": [
+    {
+      "out": "cai-sidebar.svg",
+      "drop": [],
+      "title": "CAI Connector",
+      "note": "Shipped icon - referenced by contributes.viewsContainers in package.json."
+    },
+    {
+      "out": "cai-sidebar-mark.svg",
+      "drop": ["wordmark"],
+      "title": "CAI Connector",
+      "note": "Logo mark without the CAI wordmark. Cleaner small, less identifiable."
+    }
+  ],
+
+  "margin": 0.6,
+  "precision": 3,
+  "compareSizes": [24, 32, 48, 96]
+}

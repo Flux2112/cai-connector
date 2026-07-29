@@ -174,13 +174,13 @@
         },
         "caiConnector.defaultCpus": {
           "type": "number",
-          "default": 2,
+          "default": 0.5,
           "exclusiveMinimum": 0,
           "description": "Default CPU count. Fractional values are allowed when your platform deploys fractional CPU profiles, for example 0.5."
         },
         "caiConnector.defaultMemoryGb": {
           "type": "number",
-          "default": 4,
+          "default": 16,
           "exclusiveMinimum": 0,
           "description": "Default memory in GB. Fractional values are allowed, for example 0.5."
         },

@@ -20,8 +20,7 @@ import * as vscode from "vscode";
 import { RuntimeManager } from "./runtimeManager";
 import { fetchRuntimeAddons, filterLatestRuntimes } from "./runtimePicker";
 import { loadHistory, recentSessionRecords } from "./sessionHistory";
-import { runtimeLabel } from "./sessionFormModel";
-import { loadLastSession } from "./state";
+import { projectOverviewUrl, resourcePrefill, runtimeLabel } from "./sessionFormModel";
 import { getStoragePath } from "./utils";
 import {
   CACHE_FILE, DEFAULT_CPU_PROFILES, DEFAULT_MEMORY_PROFILES,
@@ -100,16 +99,17 @@ export async function buildSessionFormInit(
   const addons = (await fetchRuntimeAddons(cdswctlPath, output)) ?? [];
 
   const history = loadHistory(context.globalStorageUri.fsPath);
-  const lastSession = loadLastSession(context);
-
-  const prefillSource = editTarget ?? lastSession;
+  const defaultResources = {
+    cpus: config.get<number>("defaultCpus", 0.5),
+    memoryGb: config.get<number>("defaultMemoryGb", 16),
+    gpus: config.get<number>("defaultGpus", 0),
+  };
+  const resources = resourcePrefill(mode, editTarget, defaultResources);
   const prefill = {
     project: editTarget?.projectName ?? "",
-    runtimeId: prefillSource?.runtimeId ?? null,
-    addonId: prefillSource?.addonId ?? null,
-    cpus: prefillSource?.cpus ?? config.get<number>("defaultCpus", 2),
-    memoryGb: prefillSource?.memoryGb ?? config.get<number>("defaultMemoryGb", 4),
-    gpus: prefillSource?.gpus ?? config.get<number>("defaultGpus", 0),
+    runtimeId: editTarget?.runtimeId ?? null,
+    addonId: editTarget?.addonId ?? null,
+    ...resources,
   };
 
   return {
@@ -123,6 +123,7 @@ export async function buildSessionFormInit(
     latestRuntimesOnly,
     runtimesFromCache: manager.wasFromCache(),
     readyTimeoutMs: ENDPOINT_READY_TIMEOUT_MS,
+    projectsUrl: projectOverviewUrl(config.get<string>("cmlUrl", "")),
     prefill,
     editTarget: editTarget
       ? { id: editTarget.id, projectName: editTarget.projectName, status: editTarget.status }

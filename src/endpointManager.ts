@@ -17,6 +17,8 @@
 
 import * as cp from "child_process";
 import * as vscode from "vscode";
+import { loadHistory } from "./sessionHistory";
+import { SessionRecord } from "./types";
 
 const SCAN_COMMAND =
   "powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process | " +
@@ -52,23 +54,36 @@ export async function listEndpointProcesses(output: vscode.OutputChannel): Promi
 }
 
 /**
+ * Selects endpoint processes that no currently stored session claims.
+ *
+ * The history collection must be read after the process scan: a second
+ * extension host can create and record a new endpoint while startup cleanup is
+ * waiting on PowerShell. Using the first scan's stale PID snapshot would then
+ * kill that newly recorded tunnel.
+ */
+export function untrackedEndpointPids(processPids: number[], records: SessionRecord[]): number[] {
+  const tracked = new Set(
+    records.map((record) => record.endpointPid).filter((pid): pid is number => pid != null),
+  );
+  return processPids.filter((pid) => !tracked.has(pid));
+}
+
+/**
  * Kills every endpoint process that no stored session claims.
  *
- * `keep` must contain the pid of every session the extension still tracks,
- * including ones another window created and ones still starting up. Anything
- * outside it is a leftover from a crashed host and safe to kill. When the scan
- * itself fails nothing is killed.
+ * History is read only after the process scan so an endpoint written while a
+ * cleanup pass was in flight remains protected. When the scan itself fails,
+ * nothing is killed.
  */
 export async function killUntrackedEndpointProcesses(
-  keep: Iterable<number>,
+  storagePath: string,
   output: vscode.OutputChannel,
 ): Promise<number> {
   const pids = await listEndpointProcesses(output);
   if (pids === null) {
     return 0;
   }
-  const tracked = new Set(keep);
-  const untracked = pids.filter((pid) => !tracked.has(pid));
+  const untracked = untrackedEndpointPids(pids, loadHistory(storagePath));
   for (const pid of untracked) {
     output.appendLine(`Killing untracked ssh-endpoint process (PID ${pid})...`);
     try {

@@ -27,7 +27,7 @@ import {
 } from "./sessionHistory";
 import { syncSshConfigFromHistory } from "./sessionReconciler";
 import { assignHostAlias, remoteUriFor } from "./sshConfig";
-import { buildEndpointArgs } from "./utils";
+import { buildEndpointArgs, findAvailablePort } from "./utils";
 import {
   CDSWCTL_TIMEOUT_MS, ConnectParams, EndpointProgressStep,
   ENDPOINT_READY_TIMEOUT_MS, ProgressReporter, SessionRecord,
@@ -85,7 +85,15 @@ export async function executeConnect(
   }
 
   output.appendLine(`Creating SSH endpoint (host alias ${hostAlias})...`);
-  const args = buildEndpointArgs(params);
+  let localPort: number;
+  try {
+    localPort = await findAvailablePort();
+  } catch (err) {
+    output.appendLine(`Could not reserve a local SSH port: ${String(err)}`);
+    vscode.window.showErrorMessage("Could not reserve a local port for the SSH endpoint.");
+    return false;
+  }
+  const args = buildEndpointArgs(params, localPort);
   output.appendLine(`Command: ${params.cdswctlPath} ${args.join(" ")}`);
 
   const child = cp.spawn(params.cdswctlPath, args, {
