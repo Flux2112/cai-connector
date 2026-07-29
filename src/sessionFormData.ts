@@ -107,8 +107,8 @@ export async function buildSessionFormInit(
     project: editTarget?.projectName ?? "",
     runtimeId: prefillSource?.runtimeId ?? null,
     addonId: prefillSource?.addonId ?? null,
-    cpus: prefillSource?.cpus ?? config.get<number>("defaultCpus", 2),
-    memoryGb: prefillSource?.memoryGb ?? config.get<number>("defaultMemoryGb", 4),
+    cpus: prefillSource?.cpus ?? config.get<number>("defaultCpus", 0.5),
+    memoryGb: prefillSource?.memoryGb ?? config.get<number>("defaultMemoryGb", 16),
     gpus: prefillSource?.gpus ?? config.get<number>("defaultGpus", 0),
   };
 
