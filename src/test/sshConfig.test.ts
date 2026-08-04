@@ -47,6 +47,8 @@ function expectedBlock(alias: string, port: string): string {
     "  User cdsw",
     "  StrictHostKeyChecking no",
     "  UserKnownHostsFile /dev/null",
+    "  ServerAliveInterval 30",
+    "  ServerAliveCountMax 6",
     "  LogLevel ERROR",
   ].join("\n");
 }
@@ -162,6 +164,15 @@ describe("syncSshConfig", () => {
     assert.equal(fs.existsSync(configFile), false);
     assert.equal(syncSshConfig([{ alias: "cml-a", port: "6806" }]), true);
     assert.equal(readConfig(), expectedBlock("cml-a", "6806") + "\n");
+  });
+
+  it("keeps every managed block alive with ssh-level keepalives", () => {
+    // Without these the tunnel is cut by an idle timeout on the way to CML and
+    // the remote window cannot be reconnected, so they belong in every block.
+    syncSshConfig([{ alias: "cml-a", port: "1111" }, { alias: "cml-b", port: "2222" }]);
+    const content = readConfig();
+    assert.equal(content.match(/^ {2}ServerAliveInterval 30$/gm)?.length, 2);
+    assert.equal(content.match(/^ {2}ServerAliveCountMax 6$/gm)?.length, 2);
   });
 
   it("writes several sessions at once, sorted by alias", () => {

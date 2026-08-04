@@ -82,7 +82,12 @@ export class SessionPanel implements vscode.TreeDataProvider<TreeNode> {
   private watcher: vscode.FileSystemWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly storagePath: string) {}
+  constructor(
+    private readonly storagePath: string,
+    private readonly output: vscode.OutputChannel,
+  ) {}
+
+  private readonly log = (msg: string): void => this.output.appendLine(msg);
 
   /**
    * The history file is the single source of truth, so the view reacts to it
@@ -111,7 +116,7 @@ export class SessionPanel implements vscode.TreeDataProvider<TreeNode> {
   startPolling(): void {
     if (this.timer) { return; }
     this.timer = setInterval(() => {
-      if (reconcileLocal(this.storagePath).changed) {
+      if (reconcileLocal(this.storagePath, this.log).changed) {
         this.refresh();
       }
     }, STATUS_POLL_INTERVAL_MS);
@@ -126,7 +131,7 @@ export class SessionPanel implements vscode.TreeDataProvider<TreeNode> {
 
   /** Refreshes statuses from the OS, then redraws. Never called from the watcher. */
   reconcileAndRefresh(): void {
-    reconcileLocal(this.storagePath);
+    reconcileLocal(this.storagePath, this.log);
     this.refresh();
   }
 

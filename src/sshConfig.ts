@@ -109,6 +109,16 @@ function stripManagedBlocks(content: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
+/**
+ * `ServerAliveInterval` is load-bearing, not tuning.
+ *
+ * The connection runs through the `cdswctl` tunnel to CML, and whatever sits in
+ * between (gateway, proxy, load balancer) commonly cuts a connection that has
+ * carried no bytes for 300 seconds. An idle remote window sends nothing for
+ * minutes, and OpenSSH's inherited `TCPKeepAlive` only fires after the OS default
+ * of roughly two hours, so without this the tunnel dies on its own — and since
+ * `cdswctl` never re-dials, the remote window cannot be recovered.
+ */
 function renderBlock(entry: SshHostEntry): string {
   return (
     `Host ${entry.alias}\n` +
@@ -117,6 +127,8 @@ function renderBlock(entry: SshHostEntry): string {
     `  User cdsw\n` +
     `  StrictHostKeyChecking no\n` +
     `  UserKnownHostsFile /dev/null\n` +
+    `  ServerAliveInterval 30\n` +
+    `  ServerAliveCountMax 6\n` +
     `  LogLevel ERROR`
   );
 }

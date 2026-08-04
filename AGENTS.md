@@ -21,7 +21,7 @@ npm test          # tsc, then: node --test "out/test/**/*.test.js"
 npm run package   # vsce package → .vsix
 ```
 
-Tests use Node's built-in `node:test` runner — there is no Mocha/Jest and no `@vscode/test-electron`. Test files live in `src/test/` as `*.test.ts` and compile to `out/test/`. 110 tests across `sshConfig.test.ts` (32), `sessionStatus.test.ts` (33), `sessionHistory.test.ts` (12), `resourceInput.test.ts` (16), and `sessionFormModel.test.ts` (17).
+Tests use Node's built-in `node:test` runner — there is no Mocha/Jest and no `@vscode/test-electron`. Test files live in `src/test/` as `*.test.ts` and compile to `out/test/`.
 
 Run a single test by name (compile first):
 
@@ -59,6 +59,7 @@ Publishing authenticates with **Microsoft Entra ID via workload identity federat
 | `endpointManager.ts` | `listEndpointProcesses`, `killUntrackedEndpointProcesses` (PowerShell scan) |
 | `endpointRegistry.ts` | Pure — the `Map` of endpoints this host spawned, with per-endpoint surrender flags |
 | `orphanCleanup.ts` | `cleanUpOrphansFlow` command, `warnAboutOrphans` startup nudge |
+| `output.ts` | `createTimestampedOutput` — the one `OutputChannel`, stamping every line |
 | `reconnectFlow.ts` | Recreate the last session, validating saved runtime/addon still exist |
 | `runtimeManager.ts` | Fetches runtimes, disk TTL cache |
 | `runtimePicker.ts` | Runtime/addon QuickPicks, `filterLatestRuntimes` |
@@ -150,6 +151,9 @@ The only UI code in the repo. `media/sessionForm.{css,js}` are **plain CSS and E
 
 ### Other notes
 
+- **`ServerAliveInterval 30` / `ServerAliveCountMax 6` in the generated host block are load-bearing.** The connection runs through the `cdswctl` tunnel to CML, and gateways/proxies in that path cut connections idle for ~300s; OpenSSH's inherited `TCPKeepAlive` only fires after the OS default of ~2h. Without the keepalives an idle remote window loses its tunnel on its own, and because `cdswctl` never re-dials and the extension has no auto-reconnect, the window is unrecoverable — Remote-SSH's reconnect finds a listener with a dead upstream. Do not remove them as "tuning".
+- **Every line in the output channel is timestamped**, because `activate()` builds the channel via `createTimestampedOutput`. Diagnosing a dropped tunnel means lining these lines up against the Remote-SSH log, which is impossible otherwise. Do not call `vscode.window.createOutputChannel` directly, and keep `appendLine` (not `append`) for whole messages — the stamp is added there.
+- `reconcileLocal`/`reconcileProcesses` take an optional `log` callback and emit one line the moment a recorded endpoint pid disappears. It is the only record of *which half of a session died first*, which is what distinguishes "the orphan pass stopped this CML session" from "CML ended it" after the fact. `stopOrphanedCmlSessions` requires the endpoint to be gone first, so the ordering is the whole answer.
 - `sshConfig.syncSshConfig` rewrites every managed block in one pass, correctly handling `Host` lines that list several patterns (`Host cml-a other`) and collapsing pre-existing duplicates. A block is "ours" iff one of its patterns matches `cml` or `cml-<slug>` — `cmlserver` and `my-cml-thing` are left alone. It returns `false` unless every requested alias ends up in the file exactly once. Keep this module VS Code-free so it stays unit-testable.
 - Sessions created before parallel support have no `hostAlias`. `syncSshConfigFromHistory` falls back to the bare legacy `cml` host for them so a window already connected through it survives the upgrade, and `joinSessionFlow` assigns a real alias on first use.
 - `connectFlow` and `reconnectFlow` hard-guard on `process.platform !== "win32"`.

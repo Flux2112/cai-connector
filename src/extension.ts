@@ -25,6 +25,7 @@ import { listEndpoints } from "./endpointRegistry";
 import { reconnectFlow } from "./reconnectFlow";
 import { loadHistory } from "./sessionHistory";
 import { cleanUpOrphansFlow, warnAboutOrphans } from "./orphanCleanup";
+import { createTimestampedOutput } from "./output";
 import {
   reconcileProcesses, reconcileWithCml, stopOrphanedCmlSessions, syncSshConfigFromHistory,
 } from "./sessionReconciler";
@@ -39,11 +40,11 @@ import { clearFile, stopCmlSessions } from "./utils";
 import { CACHE_FILE, SECRET_KEY, STATE_FILE } from "./types";
 
 export function activate(context: vscode.ExtensionContext): void {
-  const output = vscode.window.createOutputChannel("CAI Connector");
+  const output = createTimestampedOutput("CAI Connector");
   const storagePath = context.globalStorageUri.fsPath;
 
   // Sidebar sessions panel
-  const panel = new SessionPanel(storagePath);
+  const panel = new SessionPanel(storagePath, output);
   const treeView = vscode.window.createTreeView("caiConnector.sessionsView", {
     treeDataProvider: panel,
     showCollapseAll: true,

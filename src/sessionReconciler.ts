@@ -20,7 +20,7 @@ import { runCdswctl } from "./cdswctl";
 import { listEndpointProcesses } from "./endpointManager";
 import { loadHistory, saveHistory } from "./sessionHistory";
 import {
-  endpointStatusOf, isOrphanedOnCml, isStuckStarting, parseSessionIds, rollUpStatus,
+  cmlStatusOf, endpointStatusOf, isOrphanedOnCml, isStuckStarting, parseSessionIds, rollUpStatus,
 } from "./sessionStatus";
 import { SshHostEntry, syncSshConfig } from "./sshConfig";
 import { isProcessAlive } from "./utils";
@@ -54,6 +54,27 @@ function applyStatus(record: SessionRecord, endpoint: EndpointStatus): boolean {
 }
 
 /**
+ * Records the moment a tunnel stops existing.
+ *
+ * This is the one observation that makes a lost remote window diagnosable
+ * afterwards: it dates the loss and says which half of the session went first.
+ * When the endpoint dies before CML, the session may then be stopped by the
+ * orphan pass; when CML goes first, that pass cannot have been involved at all.
+ * Without this line the two are indistinguishable after the fact.
+ */
+function reportEndpointLoss(
+  record: SessionRecord,
+  pid: number | undefined,
+  log?: (msg: string) => void,
+): void {
+  log?.(
+    `Endpoint for ${record.hostAlias ?? record.projectName} is gone ` +
+    `(pid ${pid ?? "unrecorded"}); CML session ${record.sessionId ?? "unrecorded"} ` +
+    `last seen ${cmlStatusOf(record)}.`,
+  );
+}
+
+/**
  * Cheap, synchronous pass: asks the operating system whether each recorded
  * endpoint pid is still alive and rewrites the statuses accordingly.
  *
@@ -61,14 +82,20 @@ function applyStatus(record: SessionRecord, endpoint: EndpointStatus): boolean {
  * a short timer. It cannot tell a recycled pid from a live endpoint — that needs
  * `reconcileProcesses`.
  */
-export function reconcileLocal(storagePath: string): ReconcileResult {
+export function reconcileLocal(storagePath: string, log?: (msg: string) => void): ReconcileResult {
   const records = loadHistory(storagePath);
   let changed = false;
   for (const record of records) {
-    const alive = record.endpointPid != null && isProcessAlive(record.endpointPid);
+    const wasRunning = endpointStatusOf(record) === "running";
+    // `applyStatus` clears the pid once the endpoint is gone, so keep it for the log.
+    const pid = record.endpointPid;
+    const alive = pid != null && isProcessAlive(pid);
     if (applyStatus(record, alive ? "running" : "stopped")) {
       record.lastCheckedAt = new Date().toISOString();
       changed = true;
+      if (wasRunning && !alive) {
+        reportEndpointLoss(record, pid, log);
+      }
     }
   }
   if (changed) {
@@ -90,9 +117,10 @@ export async function reconcileProcesses(
   storagePath: string,
   output: vscode.OutputChannel,
 ): Promise<{ changed: boolean; trackedPids: number[] }> {
+  const log = (msg: string): void => output.appendLine(msg);
   const live = await listEndpointProcesses(output);
   if (live === null) {
-    const { changed, records } = reconcileLocal(storagePath);
+    const { changed, records } = reconcileLocal(storagePath, log);
     const pids = records.map((r) => r.endpointPid).filter((p): p is number => p != null);
     return { changed, trackedPids: pids };
   }
@@ -103,13 +131,18 @@ export async function reconcileProcesses(
   let changed = false;
 
   for (const record of records) {
-    const isOurs = record.endpointPid != null && liveSet.has(record.endpointPid);
+    const wasRunning = endpointStatusOf(record) === "running";
+    const pid = record.endpointPid;
+    const isOurs = pid != null && liveSet.has(pid);
     if (isOurs) {
-      trackedPids.push(record.endpointPid!);
+      trackedPids.push(pid!);
     }
     if (applyStatus(record, isOurs ? "running" : "stopped")) {
       record.lastCheckedAt = new Date().toISOString();
       changed = true;
+      if (wasRunning && !isOurs) {
+        reportEndpointLoss(record, pid, log);
+      }
     }
   }
   if (changed) {
@@ -133,7 +166,7 @@ export async function reconcileWithCml(
 ): Promise<boolean> {
   // The local half has to be current first: `isOrphanedOnCml` compares the two,
   // and a stale "endpoint running" would hide an orphan from the cleanup pass.
-  reconcileLocal(storagePath);
+  reconcileLocal(storagePath, (msg) => output.appendLine(msg));
   const records = loadHistory(storagePath);
   const withSession = records.filter((r) => r.sessionId);
   if (withSession.length === 0) {

@@ -53,7 +53,7 @@ export function openNewSessionForm(
       progress.report({ message: "Checking local sessions..." });
       // A full PowerShell process scan is useful at startup, but can be slow on
       // a cold Windows session. Form preparation only needs this local refresh.
-      reconcileLocal(context.globalStorageUri.fsPath);
+      reconcileLocal(context.globalStorageUri.fsPath, (msg) => output.appendLine(msg));
 
       const storedApiKey = await getStoredApiKey(context);
       let suppliedApiKey: string | undefined;
