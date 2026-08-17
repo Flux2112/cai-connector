@@ -1,6 +1,6 @@
 # Plan: Cloudera AI API v2 support and an agent-first `cai` CLI
 
-Status: proposed, 2026-08-15. Phases 1, 2 and 3 are done (2026-08-17); Phase 4 is next.
+Status: proposed, 2026-08-15. Phases 1 to 4 are done (2026-08-17); Phase 5 is next.
 The npm prerequisites are done — see CI.
 
 Goal: expose Cloudera AI to coding agents through a standalone, agent-first CLI built on
@@ -52,6 +52,11 @@ What matters, grouped by consequence:
   (`POST .../files` upload, `POST .../files/{path}:download`, list, delete),
   applications (create/stop/restart), experiments + runs + batch metric logging,
   model registry, teams/users/quotas/usage, `POST /api/v2/auth/validate_key`.
+  Two things about the upload, verified live on 2026-08-17: it is the API's only
+  `multipart/form-data` operation and takes the **destination path as the field name**, and
+  it **does not overwrite** — an occupied path keeps its file and the upload is stored as
+  `name(1).ext`, still answering 200. There is no replace-in-place anywhere in v2; the only
+  route to the original name is a delete, which this CLI does not have.
 - **Available in both, but typed and paginated here**: runtimes, runtime-addons,
   projects, jobs, job runs, models/builds/deployments.
 - **`GET /api/v2/workloads/executions`** — every running workload in one paginated call:
@@ -319,7 +324,32 @@ Five things learned on the way, all recorded in AGENTS.md:
 - The developer's own `CML_API_KEY` silently satisfied the credential-resolution tests until
   the test harness started stripping the ambient environment.
 
-**Phase 4 — safe writes.** `files put`, `jobs run --wait`, `runs stop`, `apps restart|stop`.
+~~**Phase 4 — safe writes.** `files put`, `jobs run --wait`, `runs stop`, `apps restart|stop`.~~
+Done 2026-08-17. All four shipped, plus `apps list|get`, and every one of them was exercised
+against the live instance in the scratch project `HANKE/DSE` — not just against the stub.
+78 tests in `core`, 54 in the CLI. New exit code `EXIT.WORKLOAD` (8): the call worked, the
+workload did not.
+
+Four things learned, all recorded in AGENTS.md:
+
+- **The upload endpoint does not overwrite.** It stores a numbered duplicate
+  (`probe.txt` → `probe(1).txt`) and answers 200 without saying which name it chose. The
+  first version of `files put` had a `--force` flag that promised to "replace the file",
+  which the API cannot do; found by reading the file back after a forced upload and getting
+  the old content. The command now refuses an occupied path by default and reports the name
+  that was really created as `stored`.
+- **`search_filter` is case-sensitive** (`{"name":"dse"}` finds nothing, `{"name":"DSE"}`
+  finds the project) **and matches substrings** (`"DS"` also finds `DSE`). `resolveProject`
+  could therefore never resolve `HANKE/dse`, the form both a human and the extension type.
+  It now falls back to one unfiltered listing when the hint drops everything.
+- **The one multipart operation needs a hand-built body.** The field *name* is the
+  destination path, and the content is binary, which `openapi-typescript` renders as
+  `string`. Hence `multipart.ts`, `RawRequestOptions.rawBody`, and `FetchInit.body` widened
+  to `string | Uint8Array` — and hence `assertUploadPath`, because a destination that
+  travels in the body never passes `buildPath`.
+- **A path in a request body is a fence `buildPath` cannot provide.** `..` in an upload
+  destination was reachable until that check existed, for exactly the same reason the
+  Phase 2 `..` guard was needed in the URL layer.
 
 **Phase 5 — sessions and skills.** `cai session create|list|kill` over `cdswctl`, sharing
 `session_history.json`; bundled agent skills via `postinstall`. Optionally the extension

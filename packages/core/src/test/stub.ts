@@ -23,6 +23,9 @@ export type RecordedRequest = {
   url: string;
   headers: http.IncomingHttpHeaders;
   body: string;
+  /** The same body undecoded, for the upload path — a multipart body carries
+   *  arbitrary bytes, and reading it as UTF-8 would not prove they survived. */
+  raw: Buffer;
 };
 
 export type StubReply = {
@@ -54,11 +57,13 @@ export async function startStub(reply: (req: RecordedRequest) => StubReply): Pro
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
+      const raw = Buffer.concat(chunks);
       const recorded: RecordedRequest = {
         method: req.method ?? "",
         url: req.url ?? "",
         headers: req.headers,
-        body: Buffer.concat(chunks).toString("utf8"),
+        body: raw.toString("utf8"),
+        raw,
       };
       requests.push(recorded);
 

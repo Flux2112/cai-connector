@@ -30,7 +30,22 @@ takes, and returns that operation's 200 body. A path that takes `{project_id}` w
 compile without one.
 
 `client.raw(method, path, options)` is the untyped escape hatch for anything the spec does
-not describe.
+not describe, `client.bytes(...)` returns a response body verbatim — a download decoded as
+text would be corrupted — and `options.rawBody` sends one verbatim, which is what the single
+multipart operation in the API needs.
+
+Two things worth knowing before using the file operations, both verified against a live
+instance rather than read off the spec:
+
+- **`uploadFile` does not replace.** Uploading onto an occupied path keeps the existing file
+  and stores yours beside it as `name(1).ext`, answering 200 without saying which name it
+  chose. The upload's destination is also the multipart *field name*, and it travels in the
+  body, so `assertUploadPath` refuses an absolute path or a `..` segment — nothing in the URL
+  layer sees it.
+- **`search_filter` is case-sensitive and matches substrings**, so `resolveProject` treats it
+  as a narrowing hint only: it matches on this side, prefers an exact-case hit, and falls
+  back to one unfiltered listing when the hint drops the project (`hanke/dse` naming a
+  project CML reports as `HANKE`/`DSE`).
 
 ## Options
 

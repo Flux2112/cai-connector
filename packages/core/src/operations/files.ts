@@ -16,6 +16,8 @@
  */
 
 import type { CaiClient } from "../client";
+import { CaiRequestError } from "../errors";
+import { buildMultipart } from "../multipart";
 import type { Schemas } from "./common";
 
 export type FileInfo = Schemas["FileInfo"];
@@ -72,5 +74,65 @@ export async function downloadFile(
 ): Promise<Uint8Array> {
   return client.bytes("post", "/api/v2/projects/{project_id}/files/{path}:download", {
     path: { project_id: projectId, path },
+  });
+}
+
+/**
+ * The destination path an upload is allowed to name.
+ *
+ * This check has to exist here. Every other path in this package goes through
+ * `buildPath`, which percent-encodes it and refuses `..`; an upload's
+ * destination travels in the *request body* instead, so nothing upstream sees
+ * it. An absolute path or a `..` segment would resolve outside the project on
+ * the server, so both are refused before anything is sent.
+ */
+export function assertUploadPath(path: string): string {
+  const trimmed = path.replace(/^\.\//, "");
+  if (trimmed === "") {
+    throw new CaiRequestError("upload path may not be empty");
+  }
+  if (trimmed.startsWith("/") || /^[A-Za-z]:/.test(trimmed) || trimmed.startsWith("\\")) {
+    throw new CaiRequestError(`upload path must be relative to the project root: ${JSON.stringify(path)}`);
+  }
+  if (trimmed.split(/[/\\]/).includes("..")) {
+    throw new CaiRequestError(`upload path may not contain "..": ${JSON.stringify(path)}`);
+  }
+  return trimmed;
+}
+
+/**
+ * Upload one file, verbatim, to `path` inside the project.
+ *
+ * The one multipart operation in the API, and an unusual one: **the form field
+ * name is the destination path**, not a label — the spec says so in as many
+ * words ("the key being the location to upload to (relative to /home/cdsw)").
+ * The generated types cannot express that, and cannot express binary content
+ * either, since `openapi-typescript` renders a `format: binary` field as
+ * `string`. So this goes through `client.raw` with a hand-built body rather
+ * than the typed façade.
+ *
+ * **It does not replace an existing file.** Verified against a live instance on
+ * 2026-08-17: uploading to a path that already holds a file leaves that file
+ * alone, stores this one beside it under a numbered name — `notes.txt` becomes
+ * `notes(1).txt`, browser-download style — and still answers 200. Nothing in the
+ * response says which name it chose. A caller that assumes an upload replaced
+ * what was there would keep reading the old content indefinitely, which is why
+ * `cai files put` refuses an occupied destination unless told otherwise and then
+ * re-lists the directory to report the name that was actually created.
+ */
+export async function uploadFile(
+  client: CaiClient,
+  projectId: string,
+  path: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  const destination = assertUploadPath(path);
+  const parts = destination.split(/[/\\]/);
+
+  await client.raw("post", "/api/v2/projects/{project_id}/files", {
+    path: { project_id: projectId },
+    rawBody: buildMultipart([
+      { name: destination, filename: parts[parts.length - 1], bytes },
+    ]),
   });
 }

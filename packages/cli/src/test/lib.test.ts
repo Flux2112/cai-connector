@@ -20,6 +20,7 @@ import { test } from "node:test";
 
 import { CaiApiError, CaiRequestError, CaiTransportError } from "@defysoftware/cai-core";
 
+import { parseEnvironment } from "../lib/env";
 import { CaiCliError, EXIT, reportError } from "../lib/exit";
 import { humanSize, table } from "../lib/output";
 import { assertReadOnly } from "../lib/readonly";
@@ -158,4 +159,23 @@ test("joinWorkloads prefers the execution's run-as user over the workload creato
     executions: [{ workload_crn: "c", run_as_user_name: "runner" }],
   });
   assert.equal(rows[0].user, "runner");
+});
+
+test("parseEnvironment splits at the first = only", () => {
+  assert.deepEqual(parseEnvironment(["A=1", "B=x=y", "C="]), { A: "1", B: "x=y", C: "" });
+});
+
+test("parseEnvironment leaves the field absent when nothing was passed", () => {
+  assert.equal(parseEnvironment(undefined), undefined);
+  assert.equal(parseEnvironment([]), undefined);
+});
+
+test("parseEnvironment refuses a pair with no name and a bare name alike", () => {
+  for (const bad of ["OOPS", "=value", ""]) {
+    assert.throws(
+      () => parseEnvironment([bad]),
+      (err: unknown) => err instanceof CaiCliError && err.code === EXIT.USAGE,
+      `accepted ${JSON.stringify(bad)}`,
+    );
+  }
 });

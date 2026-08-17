@@ -20,16 +20,10 @@ import { collect } from "../paginate";
 import { searchFilter, type ListOptions, type Schemas } from "./common";
 
 export type Job = Schemas["Job"];
-export type JobRun = Schemas["JobRun"];
 
 export type ListJobsOptions = ListOptions & {
   /** Filter by job name, as the API's `name` search key does. */
   name?: string;
-};
-
-export type ListJobRunsOptions = ListOptions & {
-  /** Filter by run status, e.g. `running`, `succeeded`, `failed`. */
-  status?: string;
 };
 
 export async function listJobs(
@@ -56,38 +50,5 @@ export async function listJobs(
 export async function getJob(client: CaiClient, projectId: string, jobId: string): Promise<Job> {
   return client.get("/api/v2/projects/{project_id}/jobs/{job_id}", {
     path: { project_id: projectId, job_id: jobId },
-  });
-}
-
-export async function listJobRuns(
-  client: CaiClient,
-  projectId: string,
-  jobId: string,
-  options: ListJobRunsOptions = {},
-): Promise<JobRun[]> {
-  return collect<JobRun>(
-    async (pageToken) => {
-      const page = await client.get("/api/v2/projects/{project_id}/jobs/{job_id}/runs", {
-        path: { project_id: projectId, job_id: jobId },
-        query: {
-          search_filter: searchFilter({ status: options.status }),
-          page_size: options.pageSize,
-          page_token: pageToken,
-        },
-      });
-      return { items: page.job_runs, nextPageToken: page.next_page_token };
-    },
-    { limit: options.limit },
-  );
-}
-
-export async function getJobRun(
-  client: CaiClient,
-  projectId: string,
-  jobId: string,
-  runId: string,
-): Promise<JobRun> {
-  return client.get("/api/v2/projects/{project_id}/jobs/{job_id}/runs/{run_id}", {
-    path: { project_id: projectId, job_id: jobId, run_id: runId },
   });
 }

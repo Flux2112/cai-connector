@@ -42,8 +42,17 @@ export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
 export type FetchInit = {
   method: string;
   headers: Record<string, string>;
-  body?: string;
+  /** Bytes rather than a string for the one multipart operation in the API:
+   *  UTF-8 encoding an arbitrary file to build the body would corrupt it, the
+   *  same way `text()` would corrupt a download. */
+  body?: string | Uint8Array;
   signal?: AbortSignal;
+};
+
+/** A body sent verbatim under a content type of the caller's choosing. */
+export type RawBody = {
+  contentType: string;
+  bytes: Uint8Array;
 };
 
 export type FetchResponse = {
@@ -87,7 +96,11 @@ export type ResolvedConfig = {
 export type RawRequestOptions = {
   path?: Record<string, string | number>;
   query?: Record<string, unknown>;
+  /** Serialized as JSON. Mutually exclusive with `rawBody`. */
   body?: unknown;
+  /** Sent as-is. The only current use is the multipart file upload, whose body
+   *  the generated types cannot describe. Mutually exclusive with `body`. */
+  rawBody?: RawBody;
   headers?: Record<string, string>;
   signal?: AbortSignal;
 };

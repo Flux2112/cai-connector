@@ -22,7 +22,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 
-export type StubRequest = { method: string; url: string; authorization?: string };
+export type StubRequest = { method: string; url: string; authorization?: string; body: string };
 
 export type StubReply = { status?: number; json?: unknown; bytes?: Uint8Array };
 
@@ -40,12 +40,14 @@ export type Stub = {
 export async function startStub(reply: (req: StubRequest) => StubReply): Promise<Stub> {
   const requests: StubRequest[] = [];
   const server = http.createServer((req, res) => {
-    req.resume();
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       const recorded: StubRequest = {
         method: req.method ?? "",
         url: req.url ?? "",
         authorization: req.headers.authorization,
+        body: Buffer.concat(chunks).toString("utf8"),
       };
       requests.push(recorded);
       const answer = reply(recorded);

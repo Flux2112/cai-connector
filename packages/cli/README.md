@@ -12,8 +12,10 @@ person reading a screen:
 - **No prompts** unless stdin is a terminal.
 - Colour is off unless `FORCE_COLOR` is set.
 
-This release is **read-only**. Every command is a GET or a validated read; nothing here can
-change or delete anything on the instance. `cai raw` refuses any verb but GET.
+Reads plus **safe writes**: a file can be uploaded, a job run started or stopped, an
+application restarted or stopped. **Nothing here deletes anything** — no project, model,
+job, file or application. That is enforced by the command surface, not by a check: no `cai`
+verb maps to a destructive path, and `cai raw` refuses any verb but GET.
 
 ## Install
 
@@ -56,11 +58,19 @@ cai projects get <project>                   one project, by owner/name or id
 
 cai files ls  <project> [path]               list a directory
 cai files get <project> <path> [-o file]     download a file, bytes verbatim
+cai files put <project> <local> [remote]     upload a file  [--force]
 
 cai jobs list <project> [--name N]           jobs defined in a project
 cai jobs get  <project> <job>
+cai jobs run  <project> <job>                start a run  [--wait --timeout S --env K=V]
 cai runs list <project> <job> [--status S]   runs of one job
 cai runs get  <project> <job> <run>
+cai runs stop <project> <job> <run>          stop one named run
+
+cai apps list    <project> [--status S]      applications in a project
+cai apps get     <project> <app>
+cai apps restart <project> <app>             restart, or start a stopped one
+cai apps stop    <project> <app>
 
 cai runtimes list                            runtimes on the instance
 cai workloads list [--status running]        every running workload, one call
@@ -83,9 +93,15 @@ and `--page-size`; `--verbose` logs each request to stderr with the key redacted
 | 5 | the instance answered, with a failure |
 | 6 | **no answer at all** — DNS, TLS, refused, timeout |
 | 7 | the request failed validation and never left |
+| 8 | the call worked; the **workload** did not succeed |
 
 The 5/6 split is deliberate and load-bearing: no answer is not the same as a negative
 answer, so "the listing failed" must never be read as "the thing is gone".
+
+8 is the same idea one level up. `cai jobs run --wait` exits 8 when the run failed, was
+stopped, or was still going when the wait expired — nothing went wrong with the *call*, so a
+caller that read it as a request failure and retried would start the job a second time. The
+run is printed on stdout either way, so its id is always available.
 
 ## Notes
 
@@ -96,6 +112,14 @@ answer, so "the listing failed" must never be read as "the thing is gone".
 - `files get` writes bytes verbatim, so binary files survive intact. Without `-o` the bytes
   go to stdout; `--json` then requires `-o`, because a file's bytes cannot be part of a
   JSON document.
+- **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
+  occupied path leaves the old file alone and stores the new one beside it as
+  `name(1).ext`, answering 200 without saying which name it chose. So an occupied
+  destination is refused by default; `--force` uploads anyway and the result's `stored`
+  field reports the name that was really created. Delete the old file first if you need
+  the original name — from the CML UI or a session, since this CLI never deletes.
+- A destination that is absolute or contains `..` is refused before anything is sent. It
+  travels in the request body rather than the URL, so nothing else would catch it.
 - If your instance serves only its leaf certificate, Node cannot build the chain the way a
   browser can. Point `NODE_EXTRA_CA_CERTS` at a PEM file containing the issuing
   intermediate as well as the root.

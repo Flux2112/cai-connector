@@ -17,6 +17,7 @@
 
 export { createClient, type CaiClient } from "./client";
 export { CaiApiError, CaiError, CaiRequestError, CaiTransportError } from "./errors";
+export { buildMultipart, multipartBoundary, type MultipartPart } from "./multipart";
 export { collect, paginate, type Page, type PaginateOptions } from "./paginate";
 export { redact } from "./redact";
 export { buildPath, buildQuery, joinUrl } from "./url";
@@ -30,25 +31,32 @@ export {
   type FetchResponse,
   type HttpMethod,
   type LogLine,
+  type RawBody,
   type RawRequestOptions,
 } from "./types";
 
 /** The generated spec surface, for callers that want to name a type directly. */
 export type { components, operations, paths } from "./generated/schema";
 
+export {
+  getApplication,
+  listApplications,
+  restartApplication,
+  stopApplication,
+  type Application,
+  type ListApplicationsOptions,
+} from "./operations/applications";
 export { validateKey, whoami, type KeyAudience, type KeyValidation } from "./operations/auth";
 export { searchFilter, type ListOptions } from "./operations/common";
-export { downloadFile, listFiles, ROOT, type FileInfo } from "./operations/files";
 export {
-  getJob,
-  getJobRun,
-  listJobRuns,
-  listJobs,
-  type Job,
-  type JobRun,
-  type ListJobRunsOptions,
-  type ListJobsOptions,
-} from "./operations/jobs";
+  assertUploadPath,
+  downloadFile,
+  listFiles,
+  ROOT,
+  uploadFile,
+  type FileInfo,
+} from "./operations/files";
+export { getJob, listJobs, type Job, type ListJobsOptions } from "./operations/jobs";
 export {
   getProject,
   listProjects,
@@ -57,6 +65,21 @@ export {
   type ListProjectsOptions,
   type Project,
 } from "./operations/projects";
+export {
+  createJobRun,
+  DEFAULT_POLL_INTERVAL_MS,
+  FINISHED_RUN_STATUSES,
+  getJobRun,
+  isRunFinished,
+  isRunSuccessful,
+  listJobRuns,
+  stopJobRun,
+  waitForJobRun,
+  type CreateJobRunOptions,
+  type JobRun,
+  type ListJobRunsOptions,
+  type WaitOptions,
+} from "./operations/runs";
 export { listRuntimes, type ListRuntimesOptions, type Runtime } from "./operations/runtimes";
 export {
   listWorkloadExecutions,

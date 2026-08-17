@@ -42,6 +42,15 @@ export const EXIT = {
   TRANSPORT: 6,
   /** The request never left: a value failed validation before the wire. */
   REQUEST: 7,
+  /**
+   * The command worked; the *workload* it was waiting for did not succeed.
+   *
+   * A job run that failed, was stopped, timed out on the cluster, or was still
+   * running when `--wait` gave up. Separate from API because nothing went wrong
+   * with the call — a caller that treated this as a request failure would retry
+   * and start the job a second time.
+   */
+  WORKLOAD: 8,
 } as const;
 
 export type ErrorReport = {

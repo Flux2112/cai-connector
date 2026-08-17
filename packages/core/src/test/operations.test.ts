@@ -110,6 +110,49 @@ test("resolveProject also accepts the slug, which host aliases are built from", 
   );
 });
 
+test("resolveProject matches owner and name whatever their case", async () => {
+  /* Verified against a live instance: the project displayed as DSE is owned by
+   * HANKE, and both are typed lower-case by a human and by the extension, which
+   * builds its references from a lower-cased %USERNAME%. */
+  await withStub(
+    () => ({ json: { projects: [{ ...OWNED, name: "DSE", slug: "dse", owner: { username: "HANKE" } }] } }),
+    async ({ client }) => {
+      assert.equal((await resolveProject(client, "hanke/dse")).id, "p-1");
+      assert.equal((await resolveProject(client, "HANKE/DSE")).id, "p-1");
+    },
+  );
+});
+
+test("resolveProject looks again without the server's case-sensitive filter", async () => {
+  const dse = { ...OWNED, name: "DSE", slug: "dse", owner: { username: "HANKE" } };
+  await withStub(
+    (req) => (queryOf(req).search_filter ? { json: { projects: [] } } : { json: { projects: [dse] } }),
+    async ({ client, stub }) => {
+      /* The hint drops the project, so the second, unfiltered listing is the only
+       * thing that can answer. Verified live: search_filter is case-sensitive. */
+      assert.equal((await resolveProject(client, "hanke/dse")).id, "p-1");
+      assert.equal(stub.requests.length, 2);
+    },
+  );
+});
+
+test("resolveProject prefers the exact case when two projects differ only in it", async () => {
+  await withStub(
+    () => ({
+      json: {
+        projects: [
+          { ...OWNED, id: "upper", name: "DSE", slug: "DSE" },
+          { ...OWNED, id: "lower", name: "dse", slug: "dse" },
+        ],
+      },
+    }),
+    async ({ client }) => {
+      assert.equal((await resolveProject(client, "hanke/dse")).id, "lower");
+      assert.equal((await resolveProject(client, "hanke/DSE")).id, "upper");
+    },
+  );
+});
+
 test("resolveProject refuses to guess when nothing or several things match", async () => {
   await withStub(
     () => ({ json: { projects: [] } }),

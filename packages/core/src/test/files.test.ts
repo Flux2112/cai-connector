@@ -21,7 +21,8 @@ import { test } from "node:test";
 import { createClient, type CaiClient } from "../client";
 import { CaiApiError } from "../errors";
 import { downloadFile, listFiles, ROOT } from "../operations/files";
-import { getJob, getJobRun, listJobRuns, listJobs } from "../operations/jobs";
+import { getJob, listJobs } from "../operations/jobs";
+import { getJobRun, listJobRuns } from "../operations/runs";
 import { queryOf, startStub, type RecordedRequest, type StubReply } from "./stub";
 
 async function withStub(

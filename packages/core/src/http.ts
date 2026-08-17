@@ -48,7 +48,14 @@ function buildInit(cfg: ResolvedConfig, method: string, options: RawRequestOptio
 
   const init: FetchInit = { method: method.toUpperCase(), headers };
 
-  if (options.body !== undefined) {
+  if (options.body !== undefined && options.rawBody !== undefined) {
+    throw new CaiRequestError("pass either body or rawBody, not both");
+  }
+
+  if (options.rawBody !== undefined) {
+    headers["content-type"] = options.rawBody.contentType;
+    init.body = options.rawBody.bytes;
+  } else if (options.body !== undefined) {
     headers["content-type"] = "application/json";
     init.body = JSON.stringify(options.body);
   }

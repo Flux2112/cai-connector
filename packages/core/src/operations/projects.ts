@@ -79,21 +79,64 @@ export async function resolveProject(client: CaiClient, ref: string): Promise<Pr
     throw new CaiRequestError(`project reference must be "owner/name" or a project id, got "${ref}"`);
   }
 
-  /* The filter is the server's, so treat it as a narrowing hint and match
-   * exactly here. `slug` is accepted alongside `name` because that is what the
-   * extension's host aliases are built from. */
-  const candidates = await listProjects(client, { owner, name, includePublic: true });
-  const exact = candidates.filter(
-    (p) => p.owner?.username === owner && (p.name === name || p.slug === name),
-  );
+  /* The filter is the server's, so treat it as a narrowing hint and match here.
+   * One call answers a reference whose case matches the instance. */
+  const hinted = await listProjects(client, { owner, name, includePublic: true });
+  const match = pick(hinted, owner, name, ref);
+  if (match) {
+    return match;
+  }
 
+  /* Two things about `search_filter`, both verified against a live instance on
+   * 2026-08-17 rather than inferred: it is **case-sensitive** (`name: "dse"`
+   * returns nothing where `"DSE"` returns the project, and `owner.username`
+   * behaves the same), and it matches **substrings** (`"DS"` also finds `DSE`),
+   * which is why matching is done on this side at all.
+   *
+   * Case matters in practice: CML reports owners upper-cased while the extension
+   * builds its references from a lower-cased `%USERNAME%`, and a project
+   * displayed as `DSE` is universally typed `dse`. Such a reference is dropped by
+   * the hint before any client-side matching can help, so the only way to answer
+   * it is to look without one. A second call, but only on the path that would
+   * otherwise have failed outright. */
+  const all = await listProjects(client, { includePublic: true });
+  const loose = pick(all, owner, name, ref);
+  if (loose) {
+    return loose;
+  }
+
+  throw new CaiRequestError(`no project matched "${ref}"`);
+}
+
+/**
+ * The one project a reference names, or nothing.
+ *
+ * Exact case wins outright; otherwise a single case-insensitive match is taken.
+ * Several matches are refused rather than guessed at, and refused *here* so the
+ * caller does not widen its search after an ambiguity — two projects differing
+ * only in case is a real answer, not a miss. `slug` is accepted alongside `name`
+ * because that is what the extension's host aliases are built from.
+ */
+function pick(projects: Project[], owner: string, name: string, ref: string): Project | undefined {
+  const exact = projects.filter((p) => p.owner?.username === owner && (p.name === name || p.slug === name));
   if (exact.length === 1) {
     return exact[0];
   }
-  if (exact.length === 0) {
-    throw new CaiRequestError(`no project matched "${ref}"`);
-  }
-  throw new CaiRequestError(
-    `"${ref}" matched ${exact.length} projects: ${exact.map((p) => p.id ?? "?").join(", ")}`,
+
+  const loose = projects.filter(
+    (p) => same(p.owner?.username, owner) && (same(p.name, name) || same(p.slug, name)),
   );
+  if (loose.length === 1) {
+    return loose[0];
+  }
+  if (loose.length > 1) {
+    throw new CaiRequestError(
+      `"${ref}" matched ${loose.length} projects: ${loose.map((p) => p.id ?? "?").join(", ")}`,
+    );
+  }
+  return undefined;
+}
+
+function same(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.toLowerCase() === b.toLowerCase();
 }

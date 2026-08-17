@@ -42,13 +42,16 @@
         "description": "Inspect Cloudera AI projects"
       },
       "files": {
-        "description": "List and download project files"
+        "description": "List, download and upload project files"
       },
       "jobs": {
-        "description": "Inspect jobs"
+        "description": "Inspect jobs and start runs of them"
       },
       "runs": {
-        "description": "Inspect job runs"
+        "description": "Inspect and stop job runs"
+      },
+      "apps": {
+        "description": "Inspect, restart and stop applications"
       },
       "runtimes": {
         "description": "List available runtimes"
