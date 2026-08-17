@@ -248,8 +248,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package",
-    "publish": "vsce publish",
+    "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies",
     "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
   },
   "devDependencies": {

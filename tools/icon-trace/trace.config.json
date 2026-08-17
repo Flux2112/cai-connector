@@ -1,6 +1,6 @@
 {
-  "source": "../../media/cai-connector-side.png",
-  "outDir": "../../media",
+  "source": "../../packages/extension/media/cai-connector-side.png",
+  "outDir": "../../packages/extension/media",
   "workDir": "build",
 
   "potrace": {

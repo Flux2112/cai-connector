@@ -6,6 +6,11 @@ pipeline is shaped the way it is. The tooling lives in `tools/icon-trace/`; run
 
 Written 2026-07-29, after the first trace was rejected for looking hand-made.
 
+> Path note (2026-08-17): the repository became an npm workspaces monorepo, so
+> every `media/…` path below now lives at `packages/extension/media/…`.
+> `tools/icon-trace/` stayed at the root and its `trace.config.json` was
+> repointed accordingly.
+
 ## What ships
 
 | File | Contents | Used by |
@@ -122,9 +127,10 @@ the resulting silhouette was visibly wrong. Hence tracing rather than fitting.
 | **resvg** (`@resvg/resvg-js`) | Used for verification only. Rendering the result is the only way to catch this class of mistake. |
 | ImageMagick / Inkscape CLI | Not viable. The `convert` on a stock Windows PATH is the disk-conversion tool, not ImageMagick, and Inkscape does not expose Trace Bitmap usefully from the CLI. |
 
-`tools/**` is excluded in `.vscodeignore`, so none of this reaches the VSIX, and
-the extension keeps its zero-runtime-dependency rule — these are devDependencies
-of a separate, private package under `tools/icon-trace/`, never of the extension.
+None of this reaches the VSIX — `tools/icon-trace/` sits outside `packages/extension/`,
+which is the only directory vsce packages, and `.vscodeignore` excludes `tools/**`
+besides. The extension keeps its zero-runtime-dependency rule either way: these are
+devDependencies of a separate, private package, never of the extension.
 
 ## Marketplace icon
 

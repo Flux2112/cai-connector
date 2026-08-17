@@ -12,28 +12,49 @@ Windows-only VS Code extension (`extensionKind: ["ui"]`) that creates SSH endpoi
 - **Requires**: VS Code 1.85.0+, `cdswctl.exe`, the Remote-SSH extension
 - No bundler and no linter are configured; output is raw CommonJS in `out/`
 
+## Repository layout
+
+An npm **workspaces monorepo**. The repository root is a private, unpublished package; everything shippable lives under `packages/`.
+
+```
+package.json                 private root, workspaces: ["packages/*"]
+packages/extension/          cai-connector — the VS Code extension (VSIX)
+  package.json               the extension manifest
+  src/ media/ out/ tsconfig.json .vscodeignore README.md LICENSE
+tools/icon-trace/            private, excluded from the VSIX
+docs/  AGENTS.md  CLAUDE.md  .github/  .vscode/
+```
+
+**Every path in this document below this section is relative to `packages/extension/`** unless it starts with `docs/`, `tools/`, `.github/` or `.vscode/`. So `src/sshConfig.ts` means `packages/extension/src/sshConfig.ts`.
+
+`@defysoftware/cai-core` and `@defysoftware/cai` are reserved on npm but not yet implemented; see `docs/plans/cml-api-v2-cli.md`.
+
 ## Commands
 
+Run these from the **repository root** — the root scripts delegate to the workspace with `-w cai-connector`.
+
 ```bash
-npm run compile   # tsc -p ./            → out/
+npm run compile   # tsc -p ./            → packages/extension/out/
 npm run watch     # tsc watch mode
 npm test          # tsc, then: node --test "out/test/**/*.test.js"
-npm run package   # vsce package → .vsix
+npm run package   # vsce package --no-dependencies → packages/extension/*.vsix
 ```
+
+**`--no-dependencies` is load-bearing, not tidiness.** Inside a workspace, `npm ls --omit=dev --parseable --all` run from `packages/extension` reports the *workspace root* as a dependency path. vsce would follow that, glob the entire repository (`.git` included) and then fail on paths escaping the package directory. The extension has no runtime dependencies, so there is nothing legitimate for vsce to collect. Do not drop the flag.
 
 Tests use Node's built-in `node:test` runner — there is no Mocha/Jest and no `@vscode/test-electron`. Test files live in `src/test/` as `*.test.ts` and compile to `out/test/`.
 
-Run a single test by name (compile first):
+Run a single test by name (compile first), from the repository root:
 
 ```bash
-npm run compile && node --test --test-name-pattern "never discards a live session to make room" "out/test/**/*.test.js"
+npm run compile && node --test --test-name-pattern "never discards a live session to make room" "packages/extension/out/test/**/*.test.js"
 ```
 
 Only modules free of the VS Code API are unit-testable this way: `sshConfig.ts`, `sessionStatus.ts`, `sessionHistory.ts`, `resourceInput.ts` and `sessionFormModel.ts` (all covered), plus `endpointRegistry.ts`, `runtimeManager.ts`, `cdswctl.ts`, and the pure helpers in `utils.ts` (`buildEndpointArgs`, `multiTermFilter`) — these take `OutputChannel` as a parameter, which can be stubbed. Keep new pure logic out of `sessionForm.ts` and `sessionReconciler.ts` so it stays testable.
 
-Debug the extension with the **Run Extension** launch config (`.vscode/launch.json`); it runs `npm: compile` first.
+Debug the extension with the **Run Extension** launch config (`.vscode/launch.json`); it points `--extensionDevelopmentPath` at `packages/extension` and runs the `compile` task from `.vscode/tasks.json` first. That task is declared explicitly rather than relying on npm-script auto-detection, which becomes ambiguous once the repository has more than one `package.json`.
 
-**CI publishes on every push to `main`** (`.github/workflows/publish.yml`): bumps the minor version, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then `vsce publish` to the Marketplace. Treat any merge to `main` as a release.
+**CI publishes on every push to `main`** (`.github/workflows/publish.yml`): bumps the minor version, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then `vsce publish` to the Marketplace. Treat any merge to `main` as a release. The version bump, the publish and the artifact upload all run with `working-directory: packages/extension`; the tag step reads the version from `packages/extension/package.json`.
 
 Publishing authenticates with **Microsoft Entra ID via workload identity federation**, not a PAT — Marketplace PATs retire on 1 December 2026. `azure/login@v2` exchanges GitHub's OIDC token (hence `permissions: id-token: write`) for an Azure CLI session, and `vsce publish --azure-credential` picks it up through its credential chain (`EnvironmentCredential` → `AzureCliCredential` → …), requesting a token for the Azure DevOps resource `499b84ac-1321-427f-aa17-267ca6975798`. Only `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are stored, and neither is a secret in the usual sense. No subscription is involved, so the login sets `allow-no-subscriptions`. Note the upstream docs describe this for **Azure Pipelines** (an `AzureCLI@2` task against an ADO service connection); the GitHub Actions form here is an adaptation of the same mechanism.
 
