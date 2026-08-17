@@ -38,6 +38,17 @@ export type { components, operations, paths } from "./generated/schema";
 
 export { validateKey, whoami, type KeyAudience, type KeyValidation } from "./operations/auth";
 export { searchFilter, type ListOptions } from "./operations/common";
+export { downloadFile, listFiles, ROOT, type FileInfo } from "./operations/files";
+export {
+  getJob,
+  getJobRun,
+  listJobRuns,
+  listJobs,
+  type Job,
+  type JobRun,
+  type ListJobRunsOptions,
+  type ListJobsOptions,
+} from "./operations/jobs";
 export {
   getProject,
   listProjects,

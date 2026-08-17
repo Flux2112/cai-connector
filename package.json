@@ -14,6 +14,7 @@
     "watch": "npm run watch -w cai-connector",
     "test": "npm run test --workspaces --if-present",
     "generate": "npm run generate -w @defysoftware/cai-core",
-    "package": "npm run package -w cai-connector"
+    "package": "npm run package -w cai-connector",
+    "cai": "node packages/cli/bin/run.js"
   }
 }

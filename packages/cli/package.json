@@ -1,0 +1,77 @@
+{
+  "name": "@defysoftware/cai",
+  "version": "1.18.0",
+  "description": "Agent-first CLI for Cloudera AI (CML), built on the API v2.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux2112/cai-connector.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "cloudera",
+    "cml",
+    "cloudera-ai",
+    "cli",
+    "oclif"
+  ],
+  "main": "./out/index.js",
+  "types": "./out/index.d.ts",
+  "bin": {
+    "cai": "./bin/run.js"
+  },
+  "files": [
+    "bin",
+    "out",
+    "!out/test",
+    "!out/**/*.map",
+    "oclif.manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "oclif": {
+    "bin": "cai",
+    "dirname": "cai",
+    "commands": "./out/commands",
+    "topicSeparator": " ",
+    "topics": {
+      "projects": {
+        "description": "Inspect Cloudera AI projects"
+      },
+      "files": {
+        "description": "List and download project files"
+      },
+      "jobs": {
+        "description": "Inspect jobs"
+      },
+      "runs": {
+        "description": "Inspect job runs"
+      },
+      "runtimes": {
+        "description": "List available runtimes"
+      },
+      "workloads": {
+        "description": "List running workloads across projects"
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "manifest": "oclif manifest",
+    "prepack": "npm run compile && npm run manifest",
+    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@defysoftware/cai-core": "1.18.0",
+    "@oclif/core": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "oclif": "^4.0.0",
+    "typescript": "^5.4.5"
+  }
+}

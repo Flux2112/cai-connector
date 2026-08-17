@@ -20,16 +20,34 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Node 24, not 20: npm trusted publishing needs npm >= 11.5.1 and Node >=
+      # 22.14.0, and Node 20 ships npm 10, which cannot do OIDC publishing at
+      # all. This is the build runner only — it does not change the extension's
+      # engines.vscode target or its compiled output.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install deps
         run: npm ci
 
       - name: Compile
         run: npm run compile
+
+      # npm test type-checks every package and runs its suite. Worth having in
+      # front of a publish now that core and cli carry real network-layer
+      # coverage; the extension's 131 tests come along for free.
+      - name: Test
+        run: npm test
+
+      # The spec lives on an internal host this runner can never reach, so both
+      # the spec and the types generated from it are committed. Regeneration is
+      # deterministic, so this is a genuine drift check: it fails if the
+      # committed types no longer match the committed spec.
+      - name: Check generated types are current
+        run: npm run generate -w @defysoftware/cai-core -- --check
 
       # Signs the Azure CLI in via workload identity federation: no secret is
       # stored, the runner proves its identity with a short-lived OIDC token.
@@ -54,9 +72,47 @@ jobs:
             --resource 499b84ac-1321-427f-aa17-267ca6975798 \
             --query expiresOn -o tsv
 
+      # The same guard as the Marketplace check above, for the same reason: npm
+      # publishing must be proven to work *before* the bump, so a broken trusted
+      # publisher cannot leave a bumped version and a pushed tag behind with no
+      # npm release.
+      #
+      # `npm publish --dry-run`, not `npm whoami`. Checked against npm 11's
+      # source rather than assumed: publish.js calls the OIDC token exchange
+      # unconditionally *before* it branches on --dry-run, so a dry run really
+      # does prove the trusted publisher is configured and the runner's identity
+      # is accepted. `npm whoami` goes through getIdentity, which only reads a
+      # token from .npmrc — with trusted publishing there is no token, so it
+      # would fail every time and prove nothing.
+      #
+      # It also runs the cli's prepack, so a broken `oclif manifest` surfaces
+      # here rather than half way through a release.
+      - name: Verify npm credential and packability
+        run: |
+          npm publish -w @defysoftware/cai-core --access public --dry-run
+          npm publish -w @defysoftware/cai      --access public --dry-run
+
+      # Every package takes the same version, equal to the tag, so core and the
+      # extension stay version-locked once they share code.
+      #
+      # The `npm pkg set` line is not tidiness: `npm version --workspaces` bumps
+      # each package but leaves inter-workspace dependency ranges alone, so
+      # without it the cli would publish at 1.n depending on cai-core 1.n-1 — a
+      # version that was never published, making the published cli
+      # uninstallable. Verified, not assumed.
       - name: Bump version
-        run: npm version minor --no-git-tag-version
-        working-directory: packages/extension
+        run: |
+          npm version minor --no-git-tag-version --workspaces
+          VERSION=$(node -p "require('./packages/extension/package.json').version")
+          npm pkg set "dependencies.@defysoftware/cai-core=${VERSION}" -w @defysoftware/cai
+          node -e "
+            const cli = require('./packages/cli/package.json');
+            const core = require('./packages/core/package.json');
+            const ext = require('./packages/extension/package.json');
+            const versions = new Set([cli.version, core.version, ext.version, cli.dependencies['@defysoftware/cai-core']]);
+            if (versions.size !== 1) throw new Error('versions out of step: ' + [...versions].join(', '));
+            console.log('all packages at ' + [...versions][0]);
+          "
 
       - name: Commit & push
         run: |
@@ -86,6 +142,21 @@ jobs:
       - name: Publish
         run: npx vsce publish --azure-credential --no-dependencies
         working-directory: packages/extension
+
+      # npm trusted publishing: the npm CLI detects the OIDC environment (the
+      # same `id-token: write` permission Azure uses above) and authenticates
+      # with it before falling back to any token, so there is no NPM_TOKEN
+      # secret. Provenance attestations are generated automatically, which is
+      # why there is no --provenance flag.
+      #
+      # core first: the cli pins it exactly, so publishing the dependent first
+      # would leave a window where `npm install @defysoftware/cai` cannot
+      # resolve.
+      - name: Publish cai-core to npm
+        run: npm publish -w @defysoftware/cai-core --access public
+
+      - name: Publish cai to npm
+        run: npm publish -w @defysoftware/cai --access public
 
       - name: Upload artifact
         if: always()

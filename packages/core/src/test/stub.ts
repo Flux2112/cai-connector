@@ -29,6 +29,8 @@ export type StubReply = {
   status?: number;
   json?: unknown;
   text?: string;
+  /** Raw bytes, for the download path. Takes precedence over `text`/`json`. */
+  bytes?: Uint8Array;
   /** Delay before replying, for timeout and abort tests. */
   delayMs?: number;
 };
@@ -62,6 +64,11 @@ export async function startStub(reply: (req: RecordedRequest) => StubReply): Pro
 
       const answer = reply(recorded);
       const send = () => {
+        if (answer.bytes) {
+          res.writeHead(answer.status ?? 200, { "content-type": "application/octet-stream" });
+          res.end(Buffer.from(answer.bytes));
+          return;
+        }
         const payload = answer.text ?? (answer.json === undefined ? "" : JSON.stringify(answer.json));
         res.writeHead(answer.status ?? 200, { "content-type": "application/json" });
         res.end(payload);

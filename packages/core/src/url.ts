@@ -25,10 +25,14 @@ const PLACEHOLDER = /\{([^}]+)\}/g;
  * Values are percent-encoded, so a `/` inside one becomes `%2F` rather than a
  * new path segment — a caller cannot reach an operation it did not name.
  *
- * Note for whoever adds `cai files`: the spec models the file path as a plain
- * `{path}` parameter, so a nested file arrives here as `a%2Fb.txt`. Whether the
- * gateway wants that or a raw slash is unverified, and is a question for the
- * command that first needs it — not something to relax here by default.
+ * The spec models a project file path as a plain `{path}` parameter, so a
+ * nested file arrives here as `a%2Fb.txt`. Verified against a live instance on
+ * 2026-08-17: the gateway decodes `%2F` and returns the same result as a raw
+ * slash, so the blanket encoding needs no exception.
+ *
+ * An empty value counts as missing. That is deliberate — `project_id: ""` would
+ * otherwise silently address a different operation. Callers that need to name
+ * the root of something pass a real token for it (`files.ROOT`).
  *
  * Paths like `/…/{run_id}:stop` carry a literal colon suffix. Nothing here
  * treats `:` specially, so those templates need no special handling.
@@ -39,6 +43,13 @@ export function buildPath(template: string, params?: Record<string, string | num
     const value = params?.[name];
     if (value === undefined || value === null || value === "") {
       throw new CaiRequestError(`missing path parameter "${name}" for ${template}`);
+    }
+    /* `..` survives percent-encoding as a dot segment and is then resolved away
+     * by the URL layer, so `{path}` = ".." would address the parent operation
+     * rather than a file. `.` is allowed: it resolves to the same URL as the
+     * bare directory and is how files.ROOT names the project root. */
+    if (String(value) === "..") {
+      throw new CaiRequestError(`path parameter "${name}" may not be ".." for ${template}`);
     }
     used.add(name);
     return encodeURIComponent(String(value));

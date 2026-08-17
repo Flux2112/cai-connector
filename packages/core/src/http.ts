@@ -18,7 +18,7 @@
 import { CaiApiError, CaiRequestError, CaiTransportError, describeApiError } from "./errors";
 import { redact, truncate } from "./redact";
 import { buildPath, buildQuery, joinUrl } from "./url";
-import type { FetchInit, FetchLike, RawRequestOptions, ResolvedConfig } from "./types";
+import type { FetchInit, FetchLike, FetchResponse, RawRequestOptions, ResolvedConfig } from "./types";
 
 /** How much of an error body reaches a message or a log line. */
 const BODY_LIMIT = 2000;
@@ -77,15 +77,18 @@ function parseBody(text: string): unknown {
 }
 
 /**
- * One request. Everything typed lives above this; this function is deliberately
- * untyped in its options so there is exactly one place that talks to the wire.
+ * Send one request and fail it if the status is not 2xx.
+ *
+ * The body is left unread on success so the caller can decide how to consume
+ * it — JSON for everything typed, bytes for file downloads. On failure it is
+ * read here as text, because the error envelope is always JSON or nothing.
  */
-export async function request(
+async function send(
   cfg: ResolvedConfig,
   method: string,
   template: string,
-  options: RawRequestOptions = {},
-): Promise<unknown> {
+  options: RawRequestOptions,
+): Promise<FetchResponse> {
   const url = joinUrl(cfg.baseUrl, buildPath(template, options.path)) + buildQuery(options.query);
   const init = buildInit(cfg, method, options);
   const label = `${init.method} ${url}`;
@@ -105,15 +108,43 @@ export async function request(
     throw new CaiTransportError(init.method, url, err);
   }
 
-  const text = await res.text();
   log(`${label} -> ${res.status} in ${Date.now() - started}ms`);
 
   if (!res.ok) {
+    const text = await res.text();
     const body = redact(truncate(text, BODY_LIMIT), cfg.apiKey);
     const { code, detail } = describeApiError(parseBody(text));
     log(`${label} error body: ${body}`);
     throw new CaiApiError({ status: res.status, method: init.method, url, body, code, detail });
   }
 
-  return parseBody(text);
+  return res;
+}
+
+/**
+ * One request. Everything typed lives above this; this function is deliberately
+ * untyped in its options so there is exactly one place that talks to the wire.
+ */
+export async function request(
+  cfg: ResolvedConfig,
+  method: string,
+  template: string,
+  options: RawRequestOptions = {},
+): Promise<unknown> {
+  const res = await send(cfg, method, template, options);
+  return parseBody(await res.text());
+}
+
+/**
+ * One request whose body is returned verbatim. Used only by file downloads,
+ * where `text()` would UTF-8 decode a binary payload and corrupt it.
+ */
+export async function requestBytes(
+  cfg: ResolvedConfig,
+  method: string,
+  template: string,
+  options: RawRequestOptions = {},
+): Promise<Uint8Array> {
+  const res = await send(cfg, method, template, { ...options, headers: { accept: "*/*", ...options.headers } });
+  return new Uint8Array(await res.arrayBuffer());
 }

@@ -1,6 +1,6 @@
 # Plan: Cloudera AI API v2 support and an agent-first `cai` CLI
 
-Status: proposed, 2026-08-15. Phases 1 and 2 are done (2026-08-17); Phase 3 is next.
+Status: proposed, 2026-08-15. Phases 1, 2 and 3 are done (2026-08-17); Phase 4 is next.
 The npm prerequisites are done — see CI.
 
 Goal: expose Cloudera AI to coding agents through a standalone, agent-first CLI built on
@@ -56,8 +56,15 @@ What matters, grouped by consequence:
   projects, jobs, job runs, models/builds/deployments.
 - **`GET /api/v2/workloads/executions`** — every running workload in one paginated call:
   `workload_type`, `status`, `start_time`, allocated CPU/mem/GPU, `pod_name`, `runtime`,
-  plus `search_filter={"status":"running"}`. A candidate replacement for the per-project
-  `cdswctl sessions list` in `reconcileWithCml`.
+  plus `search_filter={"status":"running"}`. ~~A candidate replacement for the per-project
+  `cdswctl sessions list` in `reconcileWithCml`.~~ **Not usable with a normal user key.**
+  Tested 2026-08-17 with the key in `%CML_API_KEY%`: it answers
+  `403 {"code":7,"message":"User is not an observability machine user"}`. The endpoint needs
+  an observability machine-user role that an ordinary user does not have, so the Phase 5
+  idea of replacing the per-project `cdswctl sessions list` with one call **does not work**
+  unless the extension is prepared to require that role. Reconciliation stays as it is.
+  `cai workloads list` ships anyway — it is correct, and it works for a key that does have
+  the role.
 - **No sessions endpoints.** No create, no stop, no SSH. `cdswctl ssh-endpoint` stays
   mandatory and remains the reason this extension exists.
 
@@ -289,16 +296,37 @@ deliberately left to the phase whose commands need them rather than written spec
 See AGENTS.md for the two traps found on the way (`schema.ts` vs `schema.d.ts`, and why the
 options type is a mapped type rather than an `infer` conditional).
 
-**Phase 3 — read-only CLI.** oclif scaffold, `login`/`whoami`, projects, runtimes,
+~~**Phase 3 — read-only CLI.** oclif scaffold, `login`/`whoami`, projects, runtimes,
 workloads, jobs, `files ls`/`get`, `raw`. First manual npm publish of both packages, then
-trusted publishing configured and the workflow steps added.
+trusted publishing configured and the workflow steps added.~~ Done 2026-08-17. 38 CLI tests
+(command tests spawn the real binary), plus 9 more in `core` for the jobs and files wrappers
+this phase needed. `core` lost its `private: true`; all three packages are pinned to one
+version. CI gained Node 24, `npm test`, the `--check` drift guard, an npm pre-flight and the
+two publish steps. Everything shipped is read-only.
+
+Five things learned on the way, all recorded in AGENTS.md:
+
+- `npm version --workspaces` does **not** rewrite inter-workspace dependency ranges, so
+  without a follow-up `npm pkg set` the published CLI would have depended on a `cai-core`
+  version that was never published.
+- The npm pre-flight has to be `npm publish --dry-run`, not `npm whoami`: only `publish`
+  performs the OIDC exchange, and it does so before it branches on `--dry-run`.
+- `this.exit()` in an oclif error handler aborts the process with a libuv assertion on
+  Windows when a keep-alive socket is still open, losing the exit code. `process.exitCode`
+  instead.
+- Capturing `process.stdout.write` in-process swallows `node --test`'s own reporter output;
+  the command tests spawn the binary.
+- The developer's own `CML_API_KEY` silently satisfied the credential-resolution tests until
+  the test harness started stripping the ambient environment.
 
 **Phase 4 — safe writes.** `files put`, `jobs run --wait`, `runs stop`, `apps restart|stop`.
 
 **Phase 5 — sessions and skills.** `cai session create|list|kill` over `cdswctl`, sharing
 `session_history.json`; bundled agent skills via `postinstall`. Optionally the extension
-starts consuming `core` — runtimes, and replacing the per-project `cdswctl sessions list`
-in `reconcileWithCml` with one `workloads/executions` call.
+starts consuming `core` for runtimes. ~~and replacing the per-project `cdswctl sessions list`
+in `reconcileWithCml` with one `workloads/executions` call~~ — that swap is off the table:
+the endpoint needs an observability machine-user role a normal key does not have (see
+Findings).
 
 ## Risks and things not to break
 
@@ -320,9 +348,17 @@ in `reconcileWithCml` with one `workloads/executions` call.
 
 ## Open items
 
-- Whether `workload_crn` embeds the short session id `cdswctl sessions stop /s` expects.
-  Cheap to check now that the key is known to work; decides whether Phase 5's
-  reconciliation swap is worth anything.
+- ~~Whether `workload_crn` embeds the short session id `cdswctl sessions stop /s` expects.~~
+  Moot: the endpoint that would supply it is closed to ordinary keys (see Findings), so the
+  reconciliation swap is off regardless of what the CRN contains.
+- **TLS on this instance needs the intermediate CA.** `https://oenbml.…` sends only its leaf
+  certificate, issued by `OeNB-Server-CA`. Browsers fetch the missing intermediate via AIA;
+  Node does not, so `fetch` fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE` when
+  `NODE_EXTRA_CA_CERTS` points at the root alone (`OeNB-Root-CA-PEM.cer`). Pointing it at
+  `C:\dev\certs\oenb-ca-chain.pem` works. This never affected the extension, which delegates
+  TLS to `cdswctl`, but it is the first thing a CLI user on this network will hit. Whether to
+  add a `--ca-file` flag, bundle nothing and document it, or teach the client to follow AIA
+  is undecided; the README documents the environment variable for now.
 - Whether `cdswctl login /t --updated-key` accepts this same key, or whether `/y` remains
   correct. Not blocking — `/y` demonstrably works today.
 - ~~npm org creation and the one-time manual first publish are manual steps for a human.~~

@@ -23,13 +23,15 @@ packages/extension/          cai-connector — the VS Code extension (VSIX)
   src/ media/ out/ tsconfig.json .vscodeignore README.md LICENSE
 packages/core/               @defysoftware/cai-core — typed CML API v2 client
   spec/ scripts/ src/ out/ tsconfig.json README.md LICENSE
+packages/cli/                @defysoftware/cai — the `cai` CLI (oclif)
+  bin/ src/ out/ tsconfig.json README.md LICENSE
 tools/icon-trace/            private, excluded from the VSIX
 docs/  AGENTS.md  CLAUDE.md  .github/  .vscode/
 ```
 
-**Every path in this document below this section is relative to `packages/extension/`** unless it starts with `docs/`, `tools/`, `.github/`, `.vscode/` or `packages/core/`. So `src/sshConfig.ts` means `packages/extension/src/sshConfig.ts`.
+**Every path in this document below this section is relative to `packages/extension/`** unless it starts with `docs/`, `tools/`, `.github/`, `.vscode/`, `packages/core/` or `packages/cli/`. So `src/sshConfig.ts` means `packages/extension/src/sshConfig.ts`.
 
-`@defysoftware/cai` (the CLI) is reserved on npm but not yet implemented; see `docs/plans/cml-api-v2-cli.md`. `@defysoftware/cai-core` exists as `packages/core` but is still `private: true` and has no consumers — Phase 3 drops the flag and adds the publish step.
+All three packages are **pinned to one version**, equal to the release tag, so `core` and the extension stay version-locked once Phase 5 makes them share code. The CLI therefore takes a version bump on extension-only changes; that is deliberate.
 
 ## Commands
 
@@ -41,6 +43,7 @@ npm run watch     # tsc watch mode, extension only
 npm test          # tsc, then node --test, in every package
 npm run package   # vsce package --no-dependencies → packages/extension/*.vsix
 npm run generate  # regenerate packages/core's types from the committed spec
+npm run cai       # run the CLI from source (compile first)
 ```
 
 **`--no-dependencies` is load-bearing, not tidiness.** Inside a workspace, `npm ls --omit=dev --parseable --all` run from `packages/extension` reports the *workspace root* as a dependency path. vsce would follow that, glob the entire repository (`.git` included) and then fail on paths escaping the package directory. The extension has no runtime dependencies, so there is nothing legitimate for vsce to collect. Do not drop the flag.
@@ -57,13 +60,20 @@ Only modules free of the VS Code API are unit-testable this way: `sshConfig.ts`,
 
 Debug the extension with the **Run Extension** launch config (`.vscode/launch.json`); it points `--extensionDevelopmentPath` at `packages/extension` and runs the `compile` task from `.vscode/tasks.json` first. That task is declared explicitly rather than relying on npm-script auto-detection, which becomes ambiguous once the repository has more than one `package.json`.
 
-**CI publishes on every push to `main`** (`.github/workflows/publish.yml`): bumps the minor version, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then `vsce publish` to the Marketplace. Treat any merge to `main` as a release. The version bump, the publish and the artifact upload all run with `working-directory: packages/extension`; the tag step reads the version from `packages/extension/package.json`.
+**CI publishes on every push to `main`** (`.github/workflows/publish.yml`): compiles, runs `npm test`, checks the generated types for drift, verifies both credentials, bumps the minor version across all workspaces, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then publishes the VSIX to the Marketplace and both npm packages. Treat any merge to `main` as a release of all three artifacts. The tag step reads the version from `packages/extension/package.json`.
+
+Four non-obvious things about that workflow:
+
+- **The runner is on Node 24, and that is a requirement.** npm trusted publishing needs npm ≥ 11.5.1 and Node ≥ 22.14.0; Node 20 ships npm 10 and cannot do OIDC publishing at all. It is the build runner only and does not touch `engines.vscode` or the compiled output.
+- **`npm version --workspaces` does not rewrite inter-workspace dependency ranges.** Verified, not assumed: it bumps each package's own version and leaves `cli`'s pin on `cai-core` at the previous value, which would publish a CLI depending on a `cai-core` version that was never published. The `npm pkg set` line after the bump is what fixes it, and the `node -e` check after that fails the build if the four versions ever fall out of step.
+- **The npm pre-flight is `npm publish --dry-run`, not `npm whoami`.** Checked against npm 11's source: `publish.js` calls the OIDC token exchange *before* it branches on `--dry-run`, so a dry run genuinely proves the trusted publisher is configured. `npm whoami` goes through `getIdentity`, which only reads a token from `.npmrc` — with trusted publishing there is no token, so it would fail every time and prove nothing. The guard sits before the version bump for the same reason the Marketplace check does: a broken credential must not leave a bumped version and a pushed tag behind with no release.
+- **`cai-core` publishes before `cai`**, because the CLI pins it exactly and the reverse order leaves a window in which `npm install @defysoftware/cai` cannot resolve.
 
 Publishing authenticates with **Microsoft Entra ID via workload identity federation**, not a PAT — Marketplace PATs retire on 1 December 2026. `azure/login@v2` exchanges GitHub's OIDC token (hence `permissions: id-token: write`) for an Azure CLI session, and `vsce publish --azure-credential` picks it up through its credential chain (`EnvironmentCredential` → `AzureCliCredential` → …), requesting a token for the Azure DevOps resource `499b84ac-1321-427f-aa17-267ca6975798`. Only `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are stored, and neither is a secret in the usual sense. No subscription is involved, so the login sets `allow-no-subscriptions`. Note the upstream docs describe this for **Azure Pipelines** (an `AzureCLI@2` task against an ADO service connection); the GitHub Actions form here is an adaptation of the same mechanism.
 
 ## `packages/core` — the CML API v2 client
 
-`@defysoftware/cai-core`. Paths in this section are relative to `packages/core/`. It has **no consumers yet**: the CLI arrives in Phase 3, and the extension may adopt it in Phase 5. Nothing in it may be broken by extension work, and nothing in the extension currently depends on it.
+`@defysoftware/cai-core`. Paths in this section are relative to `packages/core/`. Its only consumer is `packages/cli`; the extension may adopt it in Phase 5. Nothing in it may be broken by extension work, and nothing in the extension currently depends on it.
 
 **Zero runtime dependencies is the constraint that shapes the package**, because the extension's own no-runtime-dependency rule has to survive adopting it. `openapi-typescript` emits types only; the request layer is hand-written against them; `swagger2openapi` and `openapi-typescript` are devDependencies that never ship.
 
@@ -77,9 +87,34 @@ Three things that are not obvious from reading the code:
 
 Other invariants: the API key reaches `redact()` on every logged line and a `bearer \S+` pattern catches it even when a caller forgets to pass it in; `paginate` refuses to follow a repeated page token or run past `MAX_PAGES`, because an endless loop against a paginated API is worse than an error; `buildPath` percent-encodes every value and rejects both missing and undeclared parameters.
 
+Three things about paths and files, all verified against a live instance on 2026-08-17 rather than inferred from the spec:
+
+- **`{path}` may be percent-encoded.** The gateway decodes `%2F` and answers identically to a raw slash, so `buildPath`'s blanket encoding needs no exception for project file paths.
+- **`buildPath` rejects `""` and `".."`.** Empty counts as missing, because an empty `project_id` would silently address a different operation. `".."` survives percent-encoding as a dot segment and is then resolved away by the URL layer, so it would reach the parent operation rather than a file — `files.ROOT` is `"."` for exactly this reason, since `.` resolves to the directory itself.
+- **`ListProjectFiles` is not paginated and returns basenames.** It declares no `page_size`/`page_token` unlike every other listing, so `listFiles` makes one call with no `collect`; and listing `.local` returns `lib`, `bin`, `share`, not `.local/lib`. A caller walking the tree rejoins them itself.
+
+`client.bytes()` and `requestBytes` exist because the download operation declares no content type and project files are not necessarily text — `text()` would UTF-8 decode a parquet file and corrupt it silently. `send()` leaves the body unread on success so JSON and byte callers can each consume it their own way; on failure it reads text, because the error envelope is always JSON or nothing.
+
 The safe-writes rule is **not** enforced here. `core` exposes `delete` because it is a client for the whole API; the fence is the CLI's command surface, the same way the extension's safety rule is enforced by never passing `cdswctl`'s blanket `/a` flag.
 
 Everything in the package is unit-testable — there is no VS Code API anywhere in it. `src/test/stub.ts` starts a real `http.createServer` on a real socket so the tests exercise the actual global-`fetch` transport rather than a double.
+
+## `packages/cli` — the `cai` command line interface
+
+`@defysoftware/cai`, binary `cai`. Paths in this section are relative to `packages/cli/`. oclif v4, CommonJS, the same ES2020 target and `strict` settings as the other packages. Its runtime dependencies are `@oclif/core` and `@defysoftware/cai-core` and nothing else — the table renderer and the hidden-input prompt are hand-written for that reason, not for fun.
+
+**Read-only as of Phase 3.** Writes are Phase 4. The fence is the command surface: no verb reaches a destructive path, and `cai raw` accepts only GET. That check lives in `src/lib/readonly.ts` with its own test rather than inline in the command, because "the escape hatch cannot write" is a security property and not a detail of one command's parsing.
+
+**Agent-first is a set of concrete decisions, not a slogan.** JSON on stdout by default and `--table` for humans — that way round. Errors are JSON on **stderr**, so stdout stays parseable even on failure. `--verbose` logs to stderr for the same reason. Exit codes are a contract in `src/lib/exit.ts`, so a caller branches instead of parsing prose; `EXIT.API` (5) and `EXIT.TRANSPORT` (6) are separate for the same reason `core` splits its two error types. Colour is off unless `FORCE_COLOR` is set.
+
+Four things that will not be obvious from reading the code:
+
+- **`BaseCommand.catch` sets `process.exitCode`; it must never call `this.exit()`.** oclif's exit path calls `process.exit()` immediately, and on Windows that aborts the process with a libuv assertion (`!(handle->flags & UV_HANDLE_CLOSING)`, `src/win/async.c`) when an idle keep-alive socket from an earlier request in the same command is still open. The process then dies with 127 and the chosen exit code is lost. This was reproducible 5/5 on `cai files ls <project> ..`, which is why that case is a test.
+- **The command tests spawn the real binary.** In-process execution was tried and abandoned: capturing output means replacing `process.stdout.write`, and `node --test`'s own reporter writes there too, so a whole file's results vanished into the capture buffer. A child process also makes the exit code a genuine observation rather than a reading of `process.exitCode`.
+- **`runCommand` strips the ambient environment.** Anyone running these tests on a machine that uses the CLI has `CML_API_KEY` set, which silently satisfies the very resolution the tests check — a missing-credentials assertion passed for the wrong reason until this was added. `APPDATA`/`XDG_CONFIG_HOME` are pointed at an empty temporary directory for the same reason.
+- **No secret ever reaches argv from our side.** `--api-key` exists but warns, because argv is readable process-wide — the same reasoning behind the `%CML_API_KEY%` indirection in the extension's `auth.ts`. `cai login` validates a key against the instance *before* writing it, so a typo never becomes a stored credential that fails every later command with a confusing error.
+
+`oclif.manifest.json` is generated by `prepack` and gitignored; only the tarball needs it. `bin/run.js` is plain JavaScript outside `rootDir`, so `tsc` never sees it.
 
 ## Architecture
 
@@ -231,9 +266,10 @@ try {
 }
 ```
 
-- `OutputChannel` is dependency-injected as a parameter, never a module global.
-- Every `src/*.ts` file carries the GPL-3.0 header comment — copy it into new files.
-- **150-line soft limit per file.** Currently exceeded by `sessionManager.ts` (296), `sessionReconciler.ts` (243), `types.ts` (219), `extension.ts` (215), `sessionFormHtml.ts` (204, almost entirely markup), `sessionForm.ts` (195), `sshConfig.ts` (189), `sessionPanel.ts` (167), `runtimePicker.ts` (163), `sessionStatus.ts` (159), `cdswctl.ts` (157), and `sessionFormData.ts` (154); split by responsibility rather than growing these further. The two `media/` files are exempt — they are assets, not modules.
+- `OutputChannel` is dependency-injected as a parameter, never a module global. In `core` and `cli` the equivalent is the `log` callback passed to `createClient`.
+- Every `src/*.ts` file carries the GPL-3.0 header comment — copy it into new files. `packages/cli/bin/run.js` carries it too.
+- **150-line soft limit per file.** Currently exceeded by `sessionManager.ts` (296), `sessionReconciler.ts` (243), `types.ts` (219), `extension.ts` (215), `sessionFormHtml.ts` (204, almost entirely markup), `sessionForm.ts` (195), `sshConfig.ts` (189), `sessionPanel.ts` (167), `runtimePicker.ts` (163), `sessionStatus.ts` (159), `cdswctl.ts` (157), `sessionFormData.ts` (154), and `packages/cli/src/baseCommand.ts` (156); split by responsibility rather than growing these further. The two `media/` files are exempt — they are assets, not modules.
+- In `packages/cli`, command names come from the file path (`src/commands/projects/list.ts` → `cai projects list`), so those files are the one exception to the `camelCase` file-name rule — oclif decides. Everything else there follows the conventions above.
 
 ## Security
 

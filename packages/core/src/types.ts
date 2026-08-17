@@ -51,6 +51,9 @@ export type FetchResponse = {
   status: number;
   headers: { get(name: string): string | null };
   text(): Promise<string>;
+  /** Needed for file downloads: `text()` would UTF-8 decode a binary body
+   *  and silently corrupt it. Only the download path calls this. */
+  arrayBuffer(): Promise<ArrayBuffer>;
 };
 
 export type FetchLike = (url: string, init: FetchInit) => Promise<FetchResponse>;

@@ -16,7 +16,7 @@
  */
 
 import { CaiRequestError } from "./errors";
-import { createDefaultFetch, request } from "./http";
+import { createDefaultFetch, request, requestBytes } from "./http";
 import {
   DEFAULT_TIMEOUT_MS,
   DEFAULT_USER_AGENT,
@@ -52,6 +52,12 @@ export type CaiClient = {
   delete: Verb<"delete">;
   /** Escape hatch for paths the spec does not describe. Untyped on purpose. */
   raw(method: string, path: string, options?: RawRequestOptions): Promise<unknown>;
+  /**
+   * The response body verbatim. The spec declares no content type for the file
+   * download operation, so there is nothing to type against — and decoding it
+   * as text would corrupt anything that is not UTF-8.
+   */
+  bytes(method: string, path: string, options?: RawRequestOptions): Promise<Uint8Array>;
 };
 
 function resolve(options: ClientOptions): ResolvedConfig {
@@ -91,5 +97,6 @@ export function createClient(options: ClientOptions): CaiClient {
     patch: verb("patch") as Verb<"patch">,
     delete: verb("delete") as Verb<"delete">,
     raw: (method, path, opts) => request(cfg, method, path, opts),
+    bytes: (method, path, opts) => requestBytes(cfg, method, path, opts),
   };
 }
