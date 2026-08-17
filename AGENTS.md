@@ -21,23 +21,26 @@ package.json                 private root, workspaces: ["packages/*"]
 packages/extension/          cai-connector — the VS Code extension (VSIX)
   package.json               the extension manifest
   src/ media/ out/ tsconfig.json .vscodeignore README.md LICENSE
+packages/core/               @defysoftware/cai-core — typed CML API v2 client
+  spec/ scripts/ src/ out/ tsconfig.json README.md LICENSE
 tools/icon-trace/            private, excluded from the VSIX
 docs/  AGENTS.md  CLAUDE.md  .github/  .vscode/
 ```
 
-**Every path in this document below this section is relative to `packages/extension/`** unless it starts with `docs/`, `tools/`, `.github/` or `.vscode/`. So `src/sshConfig.ts` means `packages/extension/src/sshConfig.ts`.
+**Every path in this document below this section is relative to `packages/extension/`** unless it starts with `docs/`, `tools/`, `.github/`, `.vscode/` or `packages/core/`. So `src/sshConfig.ts` means `packages/extension/src/sshConfig.ts`.
 
-`@defysoftware/cai-core` and `@defysoftware/cai` are reserved on npm but not yet implemented; see `docs/plans/cml-api-v2-cli.md`.
+`@defysoftware/cai` (the CLI) is reserved on npm but not yet implemented; see `docs/plans/cml-api-v2-cli.md`. `@defysoftware/cai-core` exists as `packages/core` but is still `private: true` and has no consumers — Phase 3 drops the flag and adds the publish step.
 
 ## Commands
 
-Run these from the **repository root** — the root scripts delegate to the workspace with `-w cai-connector`.
+Run these from the **repository root**. `compile` and `test` fan out across every workspace with `--workspaces --if-present`; `watch` and `package` target the extension alone.
 
 ```bash
-npm run compile   # tsc -p ./            → packages/extension/out/
-npm run watch     # tsc watch mode
-npm test          # tsc, then: node --test "out/test/**/*.test.js"
+npm run compile   # tsc in every package    → packages/*/out/
+npm run watch     # tsc watch mode, extension only
+npm test          # tsc, then node --test, in every package
 npm run package   # vsce package --no-dependencies → packages/extension/*.vsix
+npm run generate  # regenerate packages/core's types from the committed spec
 ```
 
 **`--no-dependencies` is load-bearing, not tidiness.** Inside a workspace, `npm ls --omit=dev --parseable --all` run from `packages/extension` reports the *workspace root* as a dependency path. vsce would follow that, glob the entire repository (`.git` included) and then fail on paths escaping the package directory. The extension has no runtime dependencies, so there is nothing legitimate for vsce to collect. Do not drop the flag.
@@ -57,6 +60,26 @@ Debug the extension with the **Run Extension** launch config (`.vscode/launch.js
 **CI publishes on every push to `main`** (`.github/workflows/publish.yml`): bumps the minor version, commits `chore: bump minor version [skip ci]`, tags `v<version>`, then `vsce publish` to the Marketplace. Treat any merge to `main` as a release. The version bump, the publish and the artifact upload all run with `working-directory: packages/extension`; the tag step reads the version from `packages/extension/package.json`.
 
 Publishing authenticates with **Microsoft Entra ID via workload identity federation**, not a PAT — Marketplace PATs retire on 1 December 2026. `azure/login@v2` exchanges GitHub's OIDC token (hence `permissions: id-token: write`) for an Azure CLI session, and `vsce publish --azure-credential` picks it up through its credential chain (`EnvironmentCredential` → `AzureCliCredential` → …), requesting a token for the Azure DevOps resource `499b84ac-1321-427f-aa17-267ca6975798`. Only `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` are stored, and neither is a secret in the usual sense. No subscription is involved, so the login sets `allow-no-subscriptions`. Note the upstream docs describe this for **Azure Pipelines** (an `AzureCLI@2` task against an ADO service connection); the GitHub Actions form here is an adaptation of the same mechanism.
+
+## `packages/core` — the CML API v2 client
+
+`@defysoftware/cai-core`. Paths in this section are relative to `packages/core/`. It has **no consumers yet**: the CLI arrives in Phase 3, and the extension may adopt it in Phase 5. Nothing in it may be broken by extension work, and nothing in the extension currently depends on it.
+
+**Zero runtime dependencies is the constraint that shapes the package**, because the extension's own no-runtime-dependency rule has to survive adopting it. `openapi-typescript` emits types only; the request layer is hand-written against them; `swagger2openapi` and `openapi-typescript` are devDependencies that never ship.
+
+`npm run generate` converts `spec/swagger.json` (Swagger 2.0 — `openapi-typescript` v7 reads OpenAPI 3.x only, hence the hop) into `src/generated/schema.ts`. The spec is committed because it lives on an internal host CI can never reach; `-- --url $CAI_URL` refetches it and `-- --check` fails on drift without writing. Regeneration is deterministic, so `--check` is safe to wire into CI.
+
+Three things that are not obvious from reading the code:
+
+- **The generated file is `schema.ts`, not `schema.d.ts`.** `tsc` treats a `.d.ts` under `rootDir` as input only and never copies it to `outDir`, so the published package's `export type { paths } from "./generated/schema"` would resolve to nothing. As a `.ts` it emits declarations plus an empty module, and the type-only re-export is still elided. Do not "tidy" it back to `.d.ts`.
+- **The request options type is built with mapped-type key remapping, not `infer`.** A mapped type preserves the optional modifier, which is exactly what distinguishes `path: {...}` (required), `query?: {...}` (optional) and `path?: never` (absent) in openapi-typescript's output. TS strips `undefined` from an optional property in `infer` position, so an inference-based version makes every slot look required. `src/test/typing.test.ts` pins this down: `npm test` type-checks first, so each `@ts-expect-error` there is a real assertion that fails the build if the client ever degrades to `any`.
+- **`CaiTransportError` and `CaiApiError` are deliberately different types.** No HTTP response at all is not the same as an answer, for the same reason `listEndpointProcesses` returns `null` rather than `[]` — a failed listing must never be read as "the thing is gone".
+
+Other invariants: the API key reaches `redact()` on every logged line and a `bearer \S+` pattern catches it even when a caller forgets to pass it in; `paginate` refuses to follow a repeated page token or run past `MAX_PAGES`, because an endless loop against a paginated API is worse than an error; `buildPath` percent-encodes every value and rejects both missing and undeclared parameters.
+
+The safe-writes rule is **not** enforced here. `core` exposes `delete` because it is a client for the whole API; the fence is the CLI's command surface, the same way the extension's safety rule is enforced by never passing `cdswctl`'s blanket `/a` flag.
+
+Everything in the package is unit-testable — there is no VS Code API anywhere in it. `src/test/stub.ts` starts a real `http.createServer` on a real socket so the tests exercise the actual global-`fetch` transport rather than a double.
 
 ## Architecture
 

@@ -1,7 +1,7 @@
 # Plan: Cloudera AI API v2 support and an agent-first `cai` CLI
 
-Status: proposed, 2026-08-15. No code written yet; the npm prerequisites are done
-(2026-08-17 — see CI).
+Status: proposed, 2026-08-15. Phases 1 and 2 are done (2026-08-17); Phase 3 is next.
+The npm prerequisites are done — see CI.
 
 Goal: expose Cloudera AI to coding agents through a standalone, agent-first CLI built on
 the documented **API v2**, while keeping `cdswctl` for the one thing the API cannot do —
@@ -279,9 +279,15 @@ config, and every CI path shift. Merging to `main` triggers a real Marketplace r
 verify before merge: `npm run package` locally, then diff the VSIX file list against the
 currently published one. It must be identical.
 
-**Phase 2 — `packages/core`.** Spec committed, generation script, typed request function,
+~~**Phase 2 — `packages/core`.** Spec committed, generation script, typed request function,
 auth, pagination, error mapping, redaction. Tests against a local HTTP stub. No consumers
-yet.
+yet.~~ Done 2026-08-17. 48 tests, zero runtime dependencies, `private: true` until Phase 3
+gives it a consumer and a publish step. Wrappers shipped: `validateKey`/`whoami`,
+`listProjects`/`getProject`/`resolveProject`, `listRuntimes`, `listWorkloadExecutions` —
+enough to prove the typing across query, path and body shapes. Files and jobs wrappers were
+deliberately left to the phase whose commands need them rather than written speculatively.
+See AGENTS.md for the two traps found on the way (`schema.ts` vs `schema.d.ts`, and why the
+options type is a mapped type rather than an `infer` conditional).
 
 **Phase 3 — read-only CLI.** oclif scaffold, `login`/`whoami`, projects, runtimes,
 workloads, jobs, `files ls`/`get`, `raw`. First manual npm publish of both packages, then
@@ -305,9 +311,10 @@ in `reconcileWithCml` with one `workloads/executions` call.
 - **Two writers to `session_history.json`.** The extension already tolerates concurrent
   windows, but the CLI adds a non-VS-Code writer. Writes stay small and whole-file; verify
   no torn reads under the watcher.
-- **`openapi-typescript` on a Swagger 2.0 spec via conversion** may produce awkward types
-  for the `:verb` style paths (`.../{id}:stop`). Check early; hand-written overrides are
-  acceptable for the handful affected.
+- ~~**`openapi-typescript` on a Swagger 2.0 spec via conversion** may produce awkward types
+  for the `:verb` style paths (`.../{id}:stop`).~~ Checked 2026-08-17: the 14 affected paths
+  come through as ordinary literal keys, and nothing in the URL builder treats `:`
+  specially. No overrides needed.
 - **Phase 1 publishes on merge.** No way to rehearse a Marketplace release; the VSIX
   file-list diff is the only safety net.
 

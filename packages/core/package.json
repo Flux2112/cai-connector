@@ -1,0 +1,41 @@
+{
+  "name": "@defysoftware/cai-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed client for the Cloudera AI (CML) API v2. Zero runtime dependencies.",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Flux2112/cai-connector.git",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "cloudera",
+    "cml",
+    "cloudera-ai"
+  ],
+  "main": "./out/index.js",
+  "types": "./out/index.d.ts",
+  "files": [
+    "out",
+    "!out/test",
+    "!out/**/*.map",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "generate": "node scripts/generate.mjs",
+    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "openapi-typescript": "^7.9.1",
+    "swagger2openapi": "^7.0.8",
+    "typescript": "^5.4.5"
+  }
+}
