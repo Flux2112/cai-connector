@@ -103,9 +103,17 @@ const banner = [
 
 const generated = banner + astToString(await openapiTS(openapi));
 
+/* Line endings are not drift. TypeScript's printer follows the platform, so it
+ * emits CRLF on Windows and LF elsewhere, and git hands a Windows checkout
+ * whatever core.autocrlf says — so a byte comparison calls the file stale
+ * whenever those two disagree, on a file nobody has touched. Comparing content
+ * cannot hide real drift: every difference that matters survives the swap. */
+const sameContent = (a, b) => normalise(a) === normalise(b);
+const normalise = (text) => text.split("\r\n").join("\n");
+
 if (check) {
   const current = readFileSync(outPath, "utf8");
-  if (current !== generated) {
+  if (!sameContent(current, generated)) {
     console.error("src/generated/schema.ts is stale - run `npm run generate`");
     process.exit(1);
   }

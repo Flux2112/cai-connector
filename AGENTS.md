@@ -80,7 +80,7 @@ Publishing authenticates with **Microsoft Entra ID via workload identity federat
 
 **Zero runtime dependencies is the constraint that shapes the package**, because the extension's own no-runtime-dependency rule has to survive adopting it. `openapi-typescript` emits types only; the request layer is hand-written against them; `swagger2openapi` and `openapi-typescript` are devDependencies that never ship.
 
-`npm run generate` converts `spec/swagger.json` (Swagger 2.0 — `openapi-typescript` v7 reads OpenAPI 3.x only, hence the hop) into `src/generated/schema.ts`. The spec is committed because it lives on an internal host CI can never reach; `-- --url $CAI_URL` refetches it and `-- --check` fails on drift without writing. Regeneration is deterministic, so `--check` is safe to wire into CI.
+`npm run generate` converts `spec/swagger.json` (Swagger 2.0 — `openapi-typescript` v7 reads OpenAPI 3.x only, hence the hop) into `src/generated/schema.ts`. The spec is committed because it lives on an internal host CI can never reach; `-- --url $CAI_URL` refetches it and `-- --check` fails on drift without writing. Regeneration is deterministic, so `--check` is safe to wire into CI — but it compares **content, not bytes**: TypeScript's printer follows the platform, emitting CRLF on Windows and LF elsewhere, and git hands a Windows checkout whatever `core.autocrlf` says, so a byte comparison calls the file stale whenever those two disagree on a file nobody has touched. Normalising line endings cannot hide real drift, since every difference that matters survives the swap.
 
 Three things that are not obvious from reading the code:
 
