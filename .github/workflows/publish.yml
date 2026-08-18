@@ -85,26 +85,6 @@ jobs:
             --resource 499b84ac-1321-427f-aa17-267ca6975798 \
             --query expiresOn -o tsv
 
-      # The same guard as the Marketplace check above, for the same reason: npm
-      # publishing must be proven to work *before* the bump, so a broken trusted
-      # publisher cannot leave a bumped version and a pushed tag behind with no
-      # npm release.
-      #
-      # `npm publish --dry-run`, not `npm whoami`. Checked against npm 11's
-      # source rather than assumed: publish.js calls the OIDC token exchange
-      # unconditionally *before* it branches on --dry-run, so a dry run really
-      # does prove the trusted publisher is configured and the runner's identity
-      # is accepted. `npm whoami` goes through getIdentity, which only reads a
-      # token from .npmrc — with trusted publishing there is no token, so it
-      # would fail every time and prove nothing.
-      #
-      # It also runs the cli's prepack, so a broken `oclif manifest` surfaces
-      # here rather than half way through a release.
-      - name: Verify npm credential and packability
-        run: |
-          npm publish -w @defysoftware/cai-core --access public --dry-run
-          npm publish -w @defysoftware/cai      --access public --dry-run
-
       # Every package takes the same version, equal to the tag, so core and the
       # extension stay version-locked once they share code.
       #
@@ -138,6 +118,36 @@ jobs:
             if (versions.size !== 1) throw new Error('versions out of step: ' + [...versions].join(', '));
             console.log('all packages at ' + [...versions][0]);
           "
+
+      # This has to run AFTER the bump and BEFORE anything is pushed, and both
+      # halves of that are load-bearing.
+      #
+      # After the bump, because a dry run of an *already published* version dies
+      # with EPUBLISHCONFLICT — "You cannot publish over the previously published
+      # versions" — and before the bump the version is exactly the one the last
+      # release published. That passed while nothing had ever been published at
+      # the current version and failed on the very next release; reproduced
+      # locally in node:24-slim, where the same dry run conflicts at the old
+      # version and succeeds at the bumped one.
+      #
+      # Before the push, because that is what the guard is for: the bump so far
+      # is a local file edit, so a broken credential here leaves no pushed
+      # commit and no tag behind with no release.
+      #
+      # `npm publish --dry-run`, not `npm whoami`. Checked against npm 11's
+      # source rather than assumed: publish.js calls the OIDC token exchange
+      # unconditionally *before* it branches on --dry-run, so a dry run really
+      # does prove the trusted publisher is configured and the runner's identity
+      # is accepted. `npm whoami` goes through getIdentity, which only reads a
+      # token from .npmrc — with trusted publishing there is no token, so it
+      # would fail every time and prove nothing.
+      #
+      # It also runs the cli's prepack, so a broken `oclif manifest` surfaces
+      # here rather than half way through a release.
+      - name: Verify npm credential and packability
+        run: |
+          npm publish -w @defysoftware/cai-core --access public --dry-run
+          npm publish -w @defysoftware/cai      --access public --dry-run
 
       - name: Commit & push
         run: |
