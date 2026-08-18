@@ -35,7 +35,9 @@ All three packages are **pinned to one version**, equal to the release tag, so `
 
 ## Commands
 
-Run these from the **repository root**. `compile` and `test` fan out across every workspace with `--workspaces --if-present`; `watch` and `package` target the extension alone.
+Run these from the **repository root**. `compile` and `test` invoke each workspace **in dependency order — `core`, then `cli`, then the extension** — rather than fanning out with `--workspaces`; `watch` and `package` target the extension alone.
+
+**That order is load-bearing, and `--workspaces` does not provide it.** `npm run <script> --workspaces` iterates in directory order, which puts `cli` before `core`; the CLI's `tsc` then cannot resolve `@defysoftware/cai-core` because nothing has emitted its declarations yet, and the errors that follow are misleading — a property on a collapsed `{}` type rather than the missing module. It never reproduces on a machine that has compiled before, since `packages/core/out/` is already there, so it surfaces only on a fresh clone; it failed a release for exactly that reason. Adding a package that others depend on means adding it to both scripts, ahead of its consumers.
 
 ```bash
 npm run compile   # tsc in every package    → packages/*/out/

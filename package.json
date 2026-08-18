@@ -10,9 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "compile": "npm run compile --workspaces --if-present",
+    "compile": "npm run compile -w @defysoftware/cai-core && npm run compile -w @defysoftware/cai && npm run compile -w cai-connector",
     "watch": "npm run watch -w cai-connector",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test -w @defysoftware/cai-core && npm run test -w @defysoftware/cai && npm run test -w cai-connector",
     "generate": "npm run generate -w @defysoftware/cai-core",
     "package": "npm run package -w cai-connector",
     "cai": "node packages/cli/bin/run.js"
