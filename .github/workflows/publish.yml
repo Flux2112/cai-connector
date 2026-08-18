@@ -115,9 +115,21 @@ jobs:
       # uninstallable. Verified, not assumed.
       - name: Bump version
         run: |
-          npm version minor --no-git-tag-version --workspaces
+          # --no-workspaces-update is what makes this step work at all. Left on,
+          # npm re-resolves the tree the moment the bump lands, while the cli
+          # still pins the *previous* cai-core: the workspace no longer
+          # satisfies that pin, so npm asks the registry for a version that was
+          # never published and fails with ETARGET. The pin cannot be fixed
+          # before the bump either, since the new version is only known after
+          # it, so the lockfile refresh has to wait for both.
+          npm version minor --no-git-tag-version --workspaces --no-workspaces-update
           VERSION=$(node -p "require('./packages/extension/package.json').version")
           npm pkg set "dependencies.@defysoftware/cai-core=${VERSION}" -w @defysoftware/cai
+          # Every version now agrees, so the lockfile can be brought in line —
+          # and must be: it records each workspace's version, so leaving it at
+          # the old one publishes a tag whose npm ci fails on a lockfile that
+          # disagrees with the manifests beside it.
+          npm install --package-lock-only
           node -e "
             const cli = require('./packages/cli/package.json');
             const core = require('./packages/core/package.json');
