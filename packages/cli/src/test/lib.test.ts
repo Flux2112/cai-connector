@@ -65,6 +65,31 @@ test("no answer at all is a different exit code from a negative answer", () => {
   );
 });
 
+test("a transport report names the system cause and how to fix the known ones", () => {
+  /* "fetch failed" is the same sentence for a bad host name and an untrusted
+   * certificate, and the fix for the second one is never obvious from it. */
+  const untrusted = reportError(
+    new CaiTransportError(
+      "GET",
+      "https://cml.example.com/api/v2/projects",
+      Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("unable to verify"), { code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE" }),
+      }),
+    ),
+  );
+  assert.equal(untrusted.code, EXIT.TRANSPORT);
+  assert.equal(untrusted.cause, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  assert.match(String(untrusted.hint), /NODE_EXTRA_CA_CERTS/);
+  assert.match(String(untrusted.hint), /intermediate/);
+
+  /* An unrecognised cause is still reported; it just gets no advice. */
+  const odd = reportError(
+    new CaiTransportError("GET", "https://x", Object.assign(new Error("nope"), { code: "EWEIRD" })),
+  );
+  assert.equal(odd.cause, "EWEIRD");
+  assert.equal(odd.hint, undefined);
+});
+
 test("an API error report carries the status, the API code and the body", () => {
   const report = reportError(
     new CaiApiError({ method: "GET", url: "https://x/api", status: 403, body: '{"code":7}', code: 7 }),

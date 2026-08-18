@@ -130,6 +130,11 @@ record claims, so a CLI keeping its own registry would have its tunnels killed b
 the next window that opened. Sharing the file also means the sidebar shows sessions
 created here, for free.
 
+If `create` times out with an **empty log**, the project is the suspect rather than
+the tunnel: `cdswctl` given a project that cannot start a session prints nothing at
+all and waits, so a silent timeout is not the same failure as one with output. The
+error says so, and names the log either way.
+
 `--runtime` takes a numeric id or terms to match one, and falls back to whatever
 the newest stored session for that project used. The number comes from
 `cai session runtimes`, not from `cai runtimes list` — the API's runtime listing
@@ -161,7 +166,10 @@ it off; `CAI_SKILLS_DIR` sends it somewhere else.
   travels in the request body rather than the URL, so nothing else would catch it.
 - If your instance serves only its leaf certificate, Node cannot build the chain the way a
   browser can. Point `NODE_EXTRA_CA_CERTS` at a PEM file containing the issuing
-  intermediate as well as the root.
+  intermediate as well as the root — a root-only file is not enough, and it fails exactly
+  like a wrong URL unless you read the `cause`. Exit 6 reports that `cause`
+  (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `ENOTFOUND`, `ECONNREFUSED`, …) and, for the ones with
+  a standard answer, a `hint` field saying what to do.
 
 ## Related
 

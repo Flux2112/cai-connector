@@ -30,7 +30,10 @@ instance URL comes from `--url`, `$CAI_URL`, or the same file.
 
 If TLS fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, the instance is serving only
 its leaf certificate. Point `NODE_EXTRA_CA_CERTS` at a PEM holding the issuing
-intermediate as well as the root; Node will not fetch it the way a browser does.
+intermediate as well as the root; Node will not fetch it the way a browser does, and
+a root-only PEM is not enough. Exit 6 reports the system `cause` and, where the fix
+is standard, a `hint` — read those two fields before theorising, because every
+transport failure otherwise reads as `TypeError: fetch failed`.
 
 ## Exit codes
 
@@ -88,6 +91,10 @@ host alias; connect with `ssh <alias>`, or open the printed
 `vscode-remote://ssh-remote+<alias>/home/cdsw` URI. `session kill` is the way to
 end one — always named explicitly, because several sessions run in parallel and
 there is no flag that stops them all.
+
+If `session create` exits 8 with a `hint` saying the log is empty, believe it: a
+project that cannot start a session makes `cdswctl` print nothing and wait, so the
+failure is that project's, not the tunnel's. Try another project before digging.
 
 ## Notes worth knowing before you get surprised
 

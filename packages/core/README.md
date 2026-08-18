@@ -34,7 +34,7 @@ not describe, `client.bytes(...)` returns a response body verbatim — a downloa
 text would be corrupted — and `options.rawBody` sends one verbatim, which is what the single
 multipart operation in the API needs.
 
-Two things worth knowing before using the file operations, both verified against a live
+Three things worth knowing before using these operations, all verified against a live
 instance rather than read off the spec:
 
 - **`uploadFile` does not replace.** Uploading onto an occupied path keeps the existing file
@@ -46,6 +46,10 @@ instance rather than read off the spec:
   as a narrowing hint only: it matches on this side, prefers an exact-case hit, and falls
   back to one unfiltered listing when the hint drops the project (`hanke/dse` naming a
   project CML reports as `HANKE`/`DSE`).
+- **`projectRef` returns `owner/slug`, not `owner/name`.** `DSE` has the slug `dse`, and
+  `Real_DWH_Import` has `real_dwh_import`. Given the display-name form, `cdswctl
+  ssh-endpoint` does not complain — it prints nothing and waits forever — so the only safe
+  reference to hand it is the one that is known to resolve.
 
 ## Options
 
@@ -62,7 +66,10 @@ instance rather than read off the spec:
 Everything thrown extends `CaiError`.
 
 - `CaiRequestError` — bad arguments, caught before anything reaches the network.
-- `CaiTransportError` — no HTTP response at all: DNS, TLS, proxy, timeout.
+- `CaiTransportError` — no HTTP response at all: DNS, TLS, proxy, timeout. It carries
+  `code`, the system-level reason (`ENOTFOUND`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, …), which
+  `causeCode` digs out of the nested `cause` a `fetch` rejection hides it under — the
+  rejection itself stringifies to `TypeError: fetch failed` whatever went wrong.
 - `CaiApiError` — a non-2xx answer, carrying `status`, the API's `code` and `message`, and
   a truncated body. `isAuthFailure` covers 401 and 403.
 

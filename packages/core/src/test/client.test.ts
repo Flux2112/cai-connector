@@ -19,7 +19,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createClient } from "../client";
-import { CaiApiError, CaiRequestError, CaiTransportError } from "../errors";
+import { CaiApiError, CaiRequestError, CaiTransportError, causeCode } from "../errors";
 import { queryOf, startStub, type StubReply } from "./stub";
 
 const KEY = "test-key-0123456789";
@@ -154,6 +154,36 @@ test("a dead host is a transport error, not an API error", async () => {
   const err = await client.get("/api/v2/projects", {}).then(() => undefined, (e: unknown) => e);
   assert.ok(err instanceof CaiTransportError, `expected CaiTransportError, got ${String(err)}`);
   assert.equal(err.method, "GET");
+});
+
+/* Every fetch rejection stringifies to "TypeError: fetch failed", so without
+ * this the message for an untrusted certificate is the same as for a bad DNS
+ * name. The real reason is nested one or two levels down. */
+test("a transport failure carries the system code, not just \"fetch failed\"", async () => {
+  const leafSignature = Object.assign(new TypeError("fetch failed"), {
+    cause: Object.assign(new Error("unable to verify the first certificate"), {
+      code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    }),
+  });
+  assert.equal(causeCode(leafSignature), "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+
+  const client = createClient({
+    baseUrl: "https://cml.example.com",
+    apiKey: KEY,
+    fetch: () => Promise.reject(leafSignature),
+  });
+  const err = await client.get("/api/v2/projects", {}).then(() => undefined, (e: unknown) => e);
+  assert.ok(err instanceof CaiTransportError);
+  assert.equal(err.code, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  assert.match(err.message, /UNABLE_TO_VERIFY_LEAF_SIGNATURE/);
+});
+
+test("causeCode gives up rather than looping on a cyclic cause", () => {
+  const looping: { code?: string; cause?: unknown } = {};
+  looping.cause = looping;
+  assert.equal(causeCode(looping), undefined);
+  assert.equal(causeCode("a string"), undefined);
+  assert.equal(causeCode(undefined), undefined);
 });
 
 test("the default timeout aborts a hung request", async () => {

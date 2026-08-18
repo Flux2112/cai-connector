@@ -15,6 +15,7 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { Flags } from "@oclif/core";
@@ -147,8 +148,11 @@ export default class SessionCreate extends BaseCommand<typeof SessionCreate> {
       process.stderr.write(
         `${JSON.stringify(
           {
-            error: `the endpoint never came up; cdswctl's own output is in ${tunnel.logFile}`,
+            error: `the endpoint never came up within ${this.flags.timeout}s`,
             code: EXIT.WORKLOAD,
+            project: spec.project,
+            log: tunnel.logFile,
+            hint: silentTimeoutHint(tunnel.logFile, spec.project),
           },
           null,
           2,
@@ -179,6 +183,35 @@ export default class SessionCreate extends BaseCommand<typeof SessionCreate> {
     process.stderr.write(`ssh ${hostAlias}\n${remoteUriFor(hostAlias)}\n`);
     return active;
   }
+}
+
+/**
+ * What an empty log means, said out loud.
+ *
+ * `cdswctl ssh-endpoint` does not report a project it cannot start a session in:
+ * it prints nothing and waits, indefinitely, which is indistinguishable from a
+ * broken instance or a broken tunnel (observed 2026-08-18 — one project timed out
+ * silently while another was ready in 17s with the same runtime and the same
+ * flags). So an empty log is evidence in itself, and it points away from this
+ * command rather than at it. A log with content needs no hint: cdswctl already
+ * said something.
+ */
+function silentTimeoutHint(logFile: string, project: string): string | undefined {
+  let empty = false;
+  try {
+    empty = fs.statSync(logFile).size === 0;
+  } catch {
+    /* No log at all says the same thing as an empty one. */
+    empty = true;
+  }
+  if (!empty) {
+    return undefined;
+  }
+  return (
+    "cdswctl produced no output at all, so it never got as far as creating a session. That is what " +
+    `${project} being unable to start one looks like, rather than a tunnel problem: check that a ` +
+    "session starts for this project in the CML UI, and try another project to confirm the instance is fine."
+  );
 }
 
 /**

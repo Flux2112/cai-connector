@@ -1,7 +1,8 @@
 # Plan: Cloudera AI API v2 support and an agent-first `cai` CLI
 
-Status: proposed, 2026-08-15. Phases 1 to 4 are done (2026-08-17). Phase 5 is built and
-tested (2026-08-18), but its one live end-to-end check is blocked; see the note under it.
+Status: proposed, 2026-08-15. Phases 1 to 4 are done (2026-08-17). Phase 5 is built, tested
+and verified live (2026-08-18) - endpoint creation included, once the blocker turned out to be
+one specific project rather than the instance; see the note under it.
 The npm prerequisites are done — see CI.
 
 Goal: expose Cloudera AI to coding agents through a standalone, agent-first CLI built on
@@ -366,33 +367,49 @@ to a shipping extension. That is its own change with its own release risk. Until
 extension keeps its own copy of the session logic and the tests on both sides assert the same
 rules, including the shape of the JSON on disk; the extension's copy is the reference.
 
-**Live endpoint creation could not be verified: `cdswctl ssh-endpoint` currently hangs on this
-instance.** Established 2026-08-18, and it is not the CLI's doing - the same hang happens with
-`cdswctl` invoked straight from a shell, with no code of ours involved:
+**Verified live, and the hang that blocked it was one project.** `cai session create
+HANKE/ingestion --runtime 249 --addon 49 --cpus 0.5 --memory 2` produced session
+`usm20uit0vnk2pp0` on a real endpoint in 17 seconds: the record written and then upgraded to
+`active`/`running`/`running`, alias `cml-ingestion-2` on port 51981, `~/.ssh/config` rewritten,
+the detached tunnel still alive after the command exited, and `cai session kill` then confirmed
+both halves gone (`cmlStopped`, `endpointKilled`). `~/.ssh/config` came out byte-identical to a
+backup taken before the whole cycle, nine foreign hosts untouched, and a session the
+*extension* had created in another project stayed active throughout and was visible to
+`cai session list` with no handoff of any kind.
 
-- Silent for 2+ minutes, zero bytes of output, and **no CML session is created** (`cdswctl
-  sessions list` stays empty while the process runs).
-- Identical with stdout on a file, on a pipe, and with `2>&1`; identical with stdin inherited,
-  `ignore`, an open pipe, and `yes` feeding it; identical for `HANKE/DSE` and `hanke/dse`;
-  identical with the documented `cwd` of the binary's own directory.
-- `cdswctl login -y` succeeds and `cdswctl runtimes list` returns 71 kB of JSON through the
-  same redirection, so authentication, TLS and output redirection are all fine.
-- `cdswctl login -t` (the "updated key") prompts for a password instead of accepting the key,
-  so `/y` is correct and that open item is closed. Not the cause either.
+The earlier "the instance is broken" reading was wrong, and how it was wrong is worth keeping:
+**`HANKE/dse` alone cannot start a session, and `cdswctl` reports that by saying nothing at
+all.** Same binary, same flags, same runtime and addon, differing only in `-p`: one project
+ready in 17s, the other silent for 150s with a zero-byte log and no session created, over
+repeated attempts and on both reference forms. `cdswctl sessions list -p HANKE/dse` answers
+instantly and empty, so the project is reachable; it simply cannot schedule a session. That is
+for the platform team, not for this codebase.
 
-The extension issues the identical command, so it would hit the same wall today; the newest
-successful session in the local history is from 5 August. Most likely something in the path the
-tunnel itself needs - its websocket upgrade through the gateway - rather than the API path.
-**Next step for a human: start a session from the extension's sidebar.** If that hangs too,
-this is an instance or network problem for the platform team, not a CLI defect.
+Two defects of our own fell out of chasing it, both fixed:
 
-What *was* verified live: `session list` against the real shared history, and `session kill`
-end to end - API `validate_key`, `cdswctl login`, a real `cdswctl sessions stop` (correctly
-reported as *not* stopped for a session id that does not exist, so the known-bug string is not
-over-matched), the tunnel process actually killed, the record left flagged rather than recorded
-as clean, and `~/.ssh/config` rewritten with foreign hosts untouched. The spawn-and-scrape
-mechanism is covered by `packages/cli/src/test/tunnel.test.ts` against a stand-in that prints
-the two lines and lingers, including that the child outlives the watcher.
+- **`projectRef` returned `owner/name` where `cdswctl` needs `owner/slug`.** A project CML
+  displays as `DSE` has the slug `dse`; `Real_DWH_Import` has `real_dwh_import`. Given the
+  display-name form, `ssh-endpoint` hangs silently rather than erroring, so this bug could only
+  ever look like a broken instance. Not the cause of the `dse` hang - fixing it did not make
+  that project work - but it would have broken any project whose name and slug differ in case.
+- **Transport failures hid their reason.** `String(err)` on a `fetch` rejection is
+  `TypeError: fetch failed` for a bad host name, a refused port and an untrusted certificate
+  alike; `causeCode` now digs the real code out of the nested `cause`, and the CLI turns the
+  known ones into a `hint`. This cost an hour of misdiagnosis when the machine's
+  `NODE_EXTRA_CA_CERTS` turned out to point at a root-only PEM, so every API call failed with
+  exit 6 and a message that said nothing.
+
+`session create` now also interprets a *silent* timeout rather than merely reporting it: an
+empty log means cdswctl never got as far as creating a session, and the error says so and names
+the project. A log with content is left to speak for itself.
+
+Also verified live: `session list` against the real shared history, and `session kill` end to
+end - API `validate_key`, `cdswctl login`, a real `cdswctl sessions stop` (correctly reported as
+*not* stopped for a session id that does not exist, so the known-bug string is not
+over-matched), the tunnel process actually killed, and the record left flagged rather than
+recorded as clean. The spawn-and-scrape mechanism is covered by
+`packages/cli/src/test/tunnel.test.ts` against a stand-in that prints the two lines and lingers,
+including that the child outlives the watcher.
 
 ## Risks and things not to break
 
@@ -424,13 +441,19 @@ the two lines and lingers, including that the child outlives the watcher.
   `C:\dev\certs\oenb-ca-chain.pem` works. This never affected the extension, which delegates
   TLS to `cdswctl`, but it is the first thing a CLI user on this network will hit. Whether to
   add a `--ca-file` flag, bundle nothing and document it, or teach the client to follow AIA
-  is undecided; the README documents the environment variable for now.
+  is undecided; the README documents the environment variable for now. What is no longer
+  undecided is the *diagnosis*: exit 6 now reports the system `cause` and, for this case, a
+  `hint` naming `NODE_EXTRA_CA_CERTS` and the intermediate. Worth knowing that the root-only
+  file is what the machine's variable points at, and that it was rewritten in place on
+  2026-08-18 - so a working setup can stop working with nothing in this repository having
+  changed.
 - ~~Whether `cdswctl login /t --updated-key` accepts this same key, or whether `/y` remains
   correct.~~ Answered 2026-08-18: `-t` with this key prompts for a password rather than
   accepting it, so `/y` is correct. `/t` is for a credential we do not have.
-- **`cai session create` has no live green run yet** (see Phase 5). Its code path is covered
-  by tests against a stand-in; what is missing is a real endpoint, which the instance is not
-  currently producing for anyone.
+- ~~`cai session create` has no live green run yet.~~ Done 2026-08-18: a real endpoint in
+  `HANKE/ingestion`, created, wired into `~/.ssh/config` and killed (see Phase 5). What remains
+  is not ours: **`HANKE/dse` cannot start a session at all**, silently, which is a platform
+  question.
 - **The extension's adoption of `core`** needs a decision on how the VSIX would ship a
   runtime dependency: bundle with esbuild (one file, keeps `--no-dependencies` meaningful),
   or keep the two copies. Until then the conformance tests are what hold the line.

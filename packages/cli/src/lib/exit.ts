@@ -61,6 +61,30 @@ export type ErrorReport = {
   status?: number;
   /** The response body, already truncated and redacted by core. */
   body?: string;
+  /** The system-level cause of a transport failure: `ENOTFOUND`, `ECONNREFUSED`, … */
+  cause?: string;
+  /** What to do about it, for the causes where the answer is always the same. */
+  hint?: string;
+};
+
+/**
+ * The fix for the transport failures that have exactly one cause.
+ *
+ * A certificate error against a corporate instance is not a bug to investigate:
+ * the instance serves a leaf-only chain and Node, unlike a browser, will not go
+ * and fetch the issuing intermediate. Every one of these costs somebody an hour
+ * unless the message says so — the error itself only says "fetch failed".
+ */
+const TRANSPORT_HINTS: Record<string, string> = {
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+    "the instance's certificate chain could not be verified. Point NODE_EXTRA_CA_CERTS at a PEM " +
+    "holding the issuing intermediate CA as well as the root — a root-only file is not enough.",
+  SELF_SIGNED_CERT_IN_CHAIN:
+    "the chain ends in a certificate Node does not trust. Point NODE_EXTRA_CA_CERTS at your " +
+    "organisation's CA bundle.",
+  ENOTFOUND: "the host name did not resolve. Check --url, and whether you are on the right network or VPN.",
+  ECONNREFUSED: "nothing accepted the connection. Check --url, including its port.",
+  ETIMEDOUT: "the connection timed out, which usually means a proxy or firewall in the way rather than a slow instance.",
 };
 
 /** A failure the CLI raises itself, carrying the exit code it should produce. */
@@ -91,7 +115,12 @@ export function reportError(err: unknown): ErrorReport {
     };
   }
   if (err instanceof CaiTransportError) {
-    return { error: err.message, code: EXIT.TRANSPORT };
+    return {
+      error: err.message,
+      code: EXIT.TRANSPORT,
+      cause: err.code,
+      hint: err.code === undefined ? undefined : TRANSPORT_HINTS[err.code],
+    };
   }
   if (err instanceof CaiRequestError) {
     return { error: err.message, code: EXIT.REQUEST };

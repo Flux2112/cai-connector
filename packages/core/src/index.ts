@@ -16,7 +16,7 @@
  */
 
 export { createClient, type CaiClient } from "./client";
-export { CaiApiError, CaiError, CaiRequestError, CaiTransportError } from "./errors";
+export { CaiApiError, CaiError, CaiRequestError, CaiTransportError, causeCode } from "./errors";
 export { buildMultipart, multipartBoundary, type MultipartPart } from "./multipart";
 export { collect, paginate, type Page, type PaginateOptions } from "./paginate";
 export { redact } from "./redact";

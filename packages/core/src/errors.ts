@@ -42,13 +42,39 @@ export class CaiTransportError extends CaiError {
   /** Declared here rather than relying on `Error.cause`, which is ES2022 and
    *  this package targets ES2020. */
   readonly cause: unknown;
+  /** The system-level reason, when one can be found: `ENOTFOUND`,
+   *  `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, and so on. See {@link causeCode}. */
+  readonly code?: string;
 
   constructor(method: string, url: string, cause: unknown) {
-    super(`${method} ${url} failed: ${String(cause)}`);
+    const code = causeCode(cause);
+    super(`${method} ${url} failed: ${String(cause)}${code ? ` (${code})` : ""}`);
     this.method = method;
     this.url = url;
     this.cause = cause;
+    this.code = code;
   }
+}
+
+/**
+ * The system-level code buried under a `fetch` rejection.
+ *
+ * `String(err)` on one of those is `TypeError: fetch failed` and nothing else —
+ * the same sentence for a DNS failure, a refused connection and an untrusted
+ * certificate. The reason undici actually has sits on a nested `cause`, so this
+ * walks the chain (bounded, since a cycle is possible) and returns the first
+ * `code` it finds. Diagnosing a transport failure without it means guessing.
+ */
+export function causeCode(cause: unknown): string | undefined {
+  let current = cause;
+  for (let depth = 0; depth < 5 && current !== null && typeof current === "object"; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && code) {
+      return code;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 /** Cloudera AI answered with a non-2xx status. */

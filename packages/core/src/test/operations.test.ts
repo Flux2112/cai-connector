@@ -180,9 +180,19 @@ test("resolveProject rejects a malformed reference before calling out", async ()
   );
 });
 
-test("projectRef renders owner/name and does not crash on a partial record", () => {
+test("projectRef renders owner/slug and does not crash on a partial record", () => {
   assert.equal(projectRef(OWNED), "hanke/analysis");
   assert.equal(projectRef({}), "?/?");
+});
+
+/* The display name is not interchangeable with the slug, and getting it wrong
+ * does not produce an error: `cdswctl ssh-endpoint -p HANKE/DSE` hangs without
+ * output where `-p HANKE/dse` works. */
+test("projectRef prefers the slug over the display name", () => {
+  assert.equal(projectRef({ ...OWNED, name: "DSE", slug: "dse" }), "hanke/dse");
+  assert.equal(projectRef({ ...OWNED, name: "Real_DWH_Import", slug: "real_dwh_import" }), "hanke/real_dwh_import");
+  /* A record with no slug at all still has to render something usable. */
+  assert.equal(projectRef({ name: "DSE", owner: { username: "hanke" } }), "hanke/DSE");
 });
 
 test("whoami returns the username the key belongs to", async () => {

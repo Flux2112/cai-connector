@@ -52,9 +52,18 @@ export async function getProject(client: CaiClient, projectId: string): Promise<
   return client.get("/api/v2/projects/{project_id}", { path: { project_id: projectId } });
 }
 
-/** `owner/name`, the form the extension and `cdswctl` both use. */
+/**
+ * `owner/slug` — the reference `cdswctl` takes, and the URL form of a project.
+ *
+ * The **slug**, not `name`: a project CML displays as `DSE` has the slug `dse`,
+ * and `ssh-endpoint -p HANKE/DSE` does not fail — it hangs silently, forever,
+ * printing nothing and creating no session (verified 2026-08-18, against the
+ * same project that works when named `HANKE/dse`). A wrong project reference is
+ * therefore indistinguishable from a broken instance, which is why this returns
+ * the one form that is known to resolve.
+ */
 export function projectRef(project: Project): string {
-  return `${project.owner?.username ?? "?"}/${project.name ?? project.slug ?? "?"}`;
+  return `${project.owner?.username ?? "?"}/${project.slug ?? project.name ?? "?"}`;
 }
 
 /**
