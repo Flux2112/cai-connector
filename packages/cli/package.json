@@ -1,6 +1,6 @@
 {
   "name": "@defysoftware/cai",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "description": "Agent-first CLI for Cloudera AI (CML), built on the API v2.",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -75,7 +75,7 @@
     "postinstall": "node scripts/install-skills.js"
   },
   "dependencies": {
-    "@defysoftware/cai-core": "1.19.0",
+    "@defysoftware/cai-core": "1.20.0",
     "@oclif/core": "^4.0.0"
   },
   "devDependencies": {
