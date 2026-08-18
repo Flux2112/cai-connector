@@ -30,6 +30,19 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      # A lockfile written behind a private mirror carries that mirror's tarball
+      # URLs, and this runner cannot reach the host — npm ci then dies with a TLS
+      # error naming a certificate rather than the real cause, four steps before
+      # anything that could explain it. Invisible on the machine that wrote the
+      # lockfile, because there the host resolves fine. It cost one failed
+      # release; the check is a grep.
+      - name: Check the lockfile targets the public registry
+        run: |
+          if grep '"resolved": "https://' package-lock.json | grep -v 'registry\.npmjs\.org'; then
+            echo "::error::package-lock.json resolves packages from a non-public registry (listed above). Regenerate it with --registry=https://registry.npmjs.org and commit it."
+            exit 1
+          fi
+
       - name: Install deps
         run: npm ci
 
