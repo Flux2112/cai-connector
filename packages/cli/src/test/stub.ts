@@ -79,7 +79,7 @@ export type CommandResult = { stdout: string; stderr: string; exitCode: number }
 
 /** Variables that would otherwise let the developer's own machine answer for
  *  the test — the credentials the CLI is designed to find without being told. */
-const AMBIENT = ["CML_API_KEY", "CAI_URL", "CML_URL", "XDG_CONFIG_HOME"] as const;
+const AMBIENT = ["CML_API_KEY", "CAI_URL", "CML_URL", "XDG_CONFIG_HOME", "CAI_STORAGE_DIR"] as const;
 
 /**
  * Run the real binary in a child process.

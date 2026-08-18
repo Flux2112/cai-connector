@@ -75,6 +75,18 @@ Every v2 list endpoint returns an array plus `next_page_token`. `paginate` yield
 lazily, `collect` gathers them, and both refuse to follow a repeated token or to run past a
 page cap — an endless loop against a paginated API is worse than an error.
 
+## The session layer
+
+`src/session/` is not an API client: it is `cdswctl.exe`, the extension's
+`session_history.json`, and `~/.ssh/config`. It lives here because API v2 has **no
+session endpoints at all** — no create, no stop, no SSH — so a session is a spawned
+process plus a file, and both the CLI and (eventually) the extension need the same
+rules for it. Windows-only, and the only part of this package that spawns anything.
+
+It is a port of logic the extension still holds its own copy of; the tests here
+assert the same rules, including that the JSON written has the same shape, because
+the two processes read each other's records.
+
 ## Regenerating the types
 
 The spec is committed at `spec/swagger.json` because the instance is on an internal host

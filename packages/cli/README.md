@@ -75,8 +75,16 @@ cai apps stop    <project> <app>
 cai runtimes list                            runtimes on the instance
 cai workloads list [--status running]        every running workload, one call
 
+cai session runtimes [filter]                cdswctl runtimes, with numeric ids
+cai session create <project>                 an SSH endpoint; the tunnel outlives this
+cai session list [--live]                    sessions stored on this machine
+cai session kill <alias|id|project>          stop one session, named explicitly
+
 cai raw <path> [--method GET]                any API v2 path, GET only
 ```
+
+`cai session *` is **Windows-only**: API v2 has no session endpoints at all, so it
+drives `cdswctl.exe` and finds tunnels with a PowerShell process scan.
 
 `<project>` is accepted as `owner/name` or as an opaque project id. Listings take `--limit`
 and `--page-size`; `--verbose` logs each request to stderr with the key redacted.
@@ -102,6 +110,37 @@ answer, so "the listing failed" must never be read as "the thing is gone".
 stopped, or was still going when the wait expired — nothing went wrong with the *call*, so a
 caller that read it as a request failure and retried would start the job a second time. The
 run is printed on stdout either way, so its id is always available.
+
+## Sessions
+
+A session is a CML session plus an SSH tunnel, and the tunnel is a `cdswctl`
+process that must outlive the command that started it.
+
+```bash
+cai session runtimes "workbench python3.11"   # the numeric id --runtime takes
+cai session create HANKE/dse --runtime 281 --cpus 1 --memory 4
+ssh cml-dse                                   # or open the printed remote URI
+cai session list --live
+cai session kill cml-dse
+```
+
+These share `session_history.json` with the **CAI Connector VS Code extension**,
+which is not a nicety: the extension kills every endpoint process that no stored
+record claims, so a CLI keeping its own registry would have its tunnels killed by
+the next window that opened. Sharing the file also means the sidebar shows sessions
+created here, for free.
+
+`--runtime` takes a numeric id or terms to match one, and falls back to whatever
+the newest stored session for that project used. The number comes from
+`cai session runtimes`, not from `cai runtimes list` — the API's runtime listing
+carries no numeric id, and `cdswctl` wants one.
+
+## Agent skills
+
+Installing this package copies a `cai` skill into `~/.claude/skills`, describing
+these commands, the exit codes and the sharp edges. It never overwrites a copy you
+have edited — it writes `SKILL.md.new` beside it instead. `CAI_SKIP_SKILLS=1` turns
+it off; `CAI_SKILLS_DIR` sends it somewhere else.
 
 ## Notes
 

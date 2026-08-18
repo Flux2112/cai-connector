@@ -35,6 +35,12 @@ export {
   type RawRequestOptions,
 } from "./types";
 
+/**
+ * The session layer: `cdswctl`, `session_history.json`, `~/.ssh/config`.
+ * Windows-only, and the only part of this package that spawns a process.
+ */
+export * from "./session";
+
 /** The generated spec surface, for callers that want to name a type directly. */
 export type { components, operations, paths } from "./generated/schema";
 

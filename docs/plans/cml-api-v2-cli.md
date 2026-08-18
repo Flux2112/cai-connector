@@ -1,6 +1,7 @@
 # Plan: Cloudera AI API v2 support and an agent-first `cai` CLI
 
-Status: proposed, 2026-08-15. Phases 1 to 4 are done (2026-08-17); Phase 5 is next.
+Status: proposed, 2026-08-15. Phases 1 to 4 are done (2026-08-17). Phase 5 is built and
+tested (2026-08-18), but its one live end-to-end check is blocked; see the note under it.
 The npm prerequisites are done — see CI.
 
 Goal: expose Cloudera AI to coding agents through a standalone, agent-first CLI built on
@@ -351,12 +352,47 @@ Four things learned, all recorded in AGENTS.md:
   destination was reachable until that check existed, for exactly the same reason the
   Phase 2 `..` guard was needed in the URL layer.
 
-**Phase 5 — sessions and skills.** `cai session create|list|kill` over `cdswctl`, sharing
-`session_history.json`; bundled agent skills via `postinstall`. Optionally the extension
-starts consuming `core` for runtimes. ~~and replacing the per-project `cdswctl sessions list`
-in `reconcileWithCml` with one `workloads/executions` call~~ — that swap is off the table:
-the endpoint needs an observability machine-user role a normal key does not have (see
-Findings).
+**Phase 5 - sessions and skills.** Built 2026-08-18: `cai session create|list|kill`, plus
+`cai session runtimes`, and the bundled agent skill installed by `postinstall`. The shared
+session logic is ported into `packages/core/src/session/`. 115 tests in `core`, 68 in the CLI.
+~~and replacing the per-project `cdswctl sessions list` in `reconcileWithCml` with one
+`workloads/executions` call~~ - that swap is off the table: the endpoint needs an
+observability machine-user role a normal key does not have (see Findings).
+
+**The extension does not consume `core` yet, and that is a deliberate deferral.** Importing it
+would give the extension a runtime dependency, and the VSIX has none - `vsce package
+--no-dependencies` is load-bearing (see AGENTS.md), so adopting `core` means adding a bundler
+to a shipping extension. That is its own change with its own release risk. Until then the
+extension keeps its own copy of the session logic and the tests on both sides assert the same
+rules, including the shape of the JSON on disk; the extension's copy is the reference.
+
+**Live endpoint creation could not be verified: `cdswctl ssh-endpoint` currently hangs on this
+instance.** Established 2026-08-18, and it is not the CLI's doing - the same hang happens with
+`cdswctl` invoked straight from a shell, with no code of ours involved:
+
+- Silent for 2+ minutes, zero bytes of output, and **no CML session is created** (`cdswctl
+  sessions list` stays empty while the process runs).
+- Identical with stdout on a file, on a pipe, and with `2>&1`; identical with stdin inherited,
+  `ignore`, an open pipe, and `yes` feeding it; identical for `HANKE/DSE` and `hanke/dse`;
+  identical with the documented `cwd` of the binary's own directory.
+- `cdswctl login -y` succeeds and `cdswctl runtimes list` returns 71 kB of JSON through the
+  same redirection, so authentication, TLS and output redirection are all fine.
+- `cdswctl login -t` (the "updated key") prompts for a password instead of accepting the key,
+  so `/y` is correct and that open item is closed. Not the cause either.
+
+The extension issues the identical command, so it would hit the same wall today; the newest
+successful session in the local history is from 5 August. Most likely something in the path the
+tunnel itself needs - its websocket upgrade through the gateway - rather than the API path.
+**Next step for a human: start a session from the extension's sidebar.** If that hangs too,
+this is an instance or network problem for the platform team, not a CLI defect.
+
+What *was* verified live: `session list` against the real shared history, and `session kill`
+end to end - API `validate_key`, `cdswctl login`, a real `cdswctl sessions stop` (correctly
+reported as *not* stopped for a session id that does not exist, so the known-bug string is not
+over-matched), the tunnel process actually killed, the record left flagged rather than recorded
+as clean, and `~/.ssh/config` rewritten with foreign hosts untouched. The spawn-and-scrape
+mechanism is covered by `packages/cli/src/test/tunnel.test.ts` against a stand-in that prints
+the two lines and lingers, including that the child outlives the watcher.
 
 ## Risks and things not to break
 
@@ -389,7 +425,14 @@ Findings).
   TLS to `cdswctl`, but it is the first thing a CLI user on this network will hit. Whether to
   add a `--ca-file` flag, bundle nothing and document it, or teach the client to follow AIA
   is undecided; the README documents the environment variable for now.
-- Whether `cdswctl login /t --updated-key` accepts this same key, or whether `/y` remains
-  correct. Not blocking — `/y` demonstrably works today.
+- ~~Whether `cdswctl login /t --updated-key` accepts this same key, or whether `/y` remains
+  correct.~~ Answered 2026-08-18: `-t` with this key prompts for a password rather than
+  accepting it, so `/y` is correct. `/t` is for a credential we do not have.
+- **`cai session create` has no live green run yet** (see Phase 5). Its code path is covered
+  by tests against a stand-in; what is missing is a real endpoint, which the instance is not
+  currently producing for anyone.
+- **The extension's adoption of `core`** needs a decision on how the VSIX would ship a
+  runtime dependency: bundle with esbuild (one file, keeps `--no-dependencies` meaningful),
+  or keep the two copies. Until then the conformance tests are what hold the line.
 - ~~npm org creation and the one-time manual first publish are manual steps for a human.~~
   Done 2026-08-17.

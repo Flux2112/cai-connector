@@ -25,6 +25,8 @@
     "out",
     "!out/test",
     "!out/**/*.map",
+    "scripts",
+    "skills",
     "oclif.manifest.json",
     "README.md",
     "LICENSE"
@@ -53,6 +55,9 @@
       "apps": {
         "description": "Inspect, restart and stop applications"
       },
+      "session": {
+        "description": "Create, list and kill SSH endpoint sessions (Windows only)"
+      },
       "runtimes": {
         "description": "List available runtimes"
       },
@@ -66,7 +71,8 @@
     "watch": "tsc -watch -p ./",
     "manifest": "oclif manifest",
     "prepack": "npm run compile && npm run manifest",
-    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
+    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\"",
+    "postinstall": "node scripts/install-skills.js"
   },
   "dependencies": {
     "@defysoftware/cai-core": "1.18.0",
