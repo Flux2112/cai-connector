@@ -92,7 +92,10 @@ job did start, so retrying starts it a second time.
 
 ```bash
 cai files put <project> ./daily.py src/daily.py          # the script must exist first
-cai jobs create <project> --name Nightly --script src/daily.py   --runtime "workbench python3.12 standard"   --schedule "0 3 * * *" --timezone Europe/Vienna   --arguments "--table foo" --env DENV=prod --cpu 0.5 --memory 2
+cai jobs create <project> --name Nightly --script src/daily.py \
+  --runtime "workbench python3.12 standard" \
+  --schedule "0 3 * * *" --timezone Europe/Vienna \
+  --arguments "--table foo" --env DENV=prod --cpu 0.5 --memory 2
 ```
 
 Five things the API enforces or defaults, all confirmed against a live instance:
