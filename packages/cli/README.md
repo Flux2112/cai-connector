@@ -62,7 +62,8 @@ cai files put <project> <local> [remote]     upload a file  [--force]
 
 cai jobs list <project> [--name N]           jobs defined in a project
 cai jobs get  <project> <job>
-cai jobs run  <project> <job>                start a run  [--wait --timeout S --env K=V]
+cai jobs run  <project> <job>                start a run  [--wait --timeout S --env K=V
+                                                          --arguments "A B C"]
 cai runs list <project> <job> [--status S]   runs of one job
 cai runs get  <project> <job> <run>
 cai runs stop <project> <job> <run>          stop one named run
@@ -151,6 +152,14 @@ it off; `CAI_SKILLS_DIR` sends it somewhere else.
 
 - `cai workloads list` needs the observability role on the instance; an ordinary user key
   gets 403 (exit 4). Everything else works with a plain user key.
+- **The instance is the API reference.** It serves its own Swagger 2.0 document at
+  `$CAI_URL/api/v2/swagger.json`, and that path needs no credential — 118 paths, including
+  operations this CLI deliberately does not wrap. `cai raw /api/v2/swagger.json` fetches the
+  same thing. Read it rather than guessing at a request shape.
+- **`--arguments` and `--env` are not the same override.** `arguments` is one string appended
+  to the job's script invocation, so the script sees it as argv and `--arguments "A B C"`
+  passes three arguments; `--env` is repeatable `NAME=value` and travels as a JSON object.
+  Both apply to that run only and leave the job's own definition alone.
 - `files ls` returns names relative to the directory listed, not paths from the project
   root — listing `data` gives `raw`, not `data/raw`.
 - `files get` writes bytes verbatim, so binary files survive intact. Without `-o` the bytes

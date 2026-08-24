@@ -1,6 +1,6 @@
 ---
 name: cai
-description: Work with Cloudera AI (CML) from the command line — projects, files, jobs, runs, applications, and SSH endpoint sessions. Use when the task involves a CML instance, a CML project, running a CML job, or getting a shell on a CML session.
+description: Work with Cloudera AI (CML) from the command line — projects, files, jobs, runs, applications, and SSH endpoint sessions. Use when the task involves a CML instance, a CML project, running a CML job, or getting a shell on a CML session — or when asked how something is done against the CML API v2, since the instance serves its own Swagger document.
 ---
 
 # Cloudera AI from the command line
@@ -57,9 +57,19 @@ exists: `files put`, `jobs run`, `runs stop`, `apps restart|stop`.
 
 ```bash
 cai jobs run <project> <job> --wait --timeout 900   # exit 8 if the run failed
+cai jobs run <project> <job> --arguments "A B C" --env RUN_MODE=full --env DAY=2026-08-19
 cai runs stop <project> <job> <run>
 cai files put <project> ./local.py src/local.py
 ```
+
+**`arguments` and `environment` are different things, and the API models them
+differently.** `arguments` is ONE string, appended to the job's script invocation,
+so the script reads it as argv (`sys.argv[1:]` in Python) — there is no list form
+and no per-argument flag, so `--arguments "A B C"` passes three arguments while
+`--arguments "A,B,C"` passes one. `--env` is repeatable `NAME=value` and becomes a
+JSON object. Both are per-run overrides: neither changes the job, and what the job
+defines stays in place for runs that do not override it. The created run echoes
+both back, so read `arguments` off it to confirm what it actually got.
 
 **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
 occupied path keeps the old file and stores yours as `name(1).ext`, answering 200
@@ -71,6 +81,57 @@ CML UI or a session first.
 `jobs run --wait` prints the run either way, so the id is always available. Exit 8
 means the run failed, was stopped, or was still going when the wait expired — the
 job did start, so retrying starts it a second time.
+
+## Answering "how do I do X against the API?"
+
+The instance serves its own OpenAPI (Swagger 2.0) document, and that is the source
+of truth — 118 paths on the instance this was written against, including
+operations this CLI deliberately does not wrap:
+
+```bash
+curl -s "$CAI_URL/api/v2/swagger.json"        # the spec needs no credential
+cai raw /api/v2/swagger.json                  # same document, through the CLI
+```
+
+Read it rather than recalling it: `paths` gives the URL and method, `operationId`
+the name Cloudera's own documentation uses, and `definitions.<Name>` the request
+and response bodies. A request this CLI cannot make is still one you can describe
+from the spec — but say which it is, because inventing a `cai` command that does
+not exist is worse than a curl example that does.
+
+Every call is `Authorization: Bearer $CML_API_KEY` with `Content-Type:
+application/json`. Paths take the opaque `project_id` and `job_id`, never names,
+so resolving names to ids is the first step of any answer.
+
+### Worked example: trigger a job with arguments
+
+`cai projects get <project>` gives `id`; `cai jobs list <project>` gives each
+job's `id`, `script` and current `arguments`. Then either:
+
+```bash
+cai jobs run hanke/analysis 8f2q-abcd-... --arguments "A B C" --wait
+```
+
+or the same call directly, which is `CreateJobRun`:
+
+```http
+POST /api/v2/projects/{project_id}/jobs/{job_id}/runs
+Authorization: Bearer $CML_API_KEY
+Content-Type: application/json
+
+{"arguments": "A B C", "environment": {"RUN_MODE": "full"}}
+```
+
+The 200 body is a `JobRun` carrying `id` and `status`. Poll `GetJobRun`
+(`GET .../runs/{run_id}`) until the status leaves the running states, or let
+`--wait` do it. Stop one with `POST .../runs/{run_id}:stop` — the `:stop` suffix is
+a custom method, not a path segment, and it is easy to mistake for one.
+
+**Creating the job is a separate matter from running it.** `CreateJob` is in the
+spec, but a job needs its script in the project first, and its schedule, runtime,
+resources and default arguments are part of the job definition. Set it up in the
+CML UI (or with `CreateJob` if it has to be scripted), then treat `arguments` here
+as the per-run override.
 
 ## Sessions (Windows only)
 
