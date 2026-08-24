@@ -62,14 +62,20 @@ cai runs stop <project> <job> <run>
 cai files put <project> ./local.py src/local.py
 ```
 
-**`arguments` and `environment` are different things, and the API models them
-differently.** `arguments` is ONE string, appended to the job's script invocation,
-so the script reads it as argv (`sys.argv[1:]` in Python) — there is no list form
-and no per-argument flag, so `--arguments "A B C"` passes three arguments while
-`--arguments "A,B,C"` passes one. `--env` is repeatable `NAME=value` and becomes a
-JSON object. Both are per-run overrides: neither changes the job, and what the job
-defines stays in place for runs that do not override it. The created run echoes
-both back, so read `arguments` off it to confirm what it actually got.
+**`arguments` reaches the script as an environment variable, not as argv.** CML
+puts the whole string into `JOB_ARGUMENTS`, and splitting it is the script's own
+job — the CML UI labels the field "Arguments - passed in the JOB_ARGUMENTS
+environment variable". A script that reads `sys.argv` and nothing else receives
+nothing at all. The convention in the wild is one line at the top:
+
+```python
+sys.argv.extend(shlex.split(os.environ.get("JOB_ARGUMENTS", "")))
+```
+
+So `arguments` is ONE string with no list form, `--env` is repeatable
+`NAME=value` and becomes a JSON object, and both are per-run overrides that leave
+the job definition alone. The created run echoes both back — read them off it
+rather than assuming.
 
 **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
 occupied path keeps the old file and stores yours as `name(1).ext`, answering 200
@@ -81,6 +87,48 @@ CML UI or a session first.
 `jobs run --wait` prints the run either way, so the id is always available. Exit 8
 means the run failed, was stopped, or was still going when the wait expired — the
 job did start, so retrying starts it a second time.
+
+## Creating a job
+
+```bash
+cai files put <project> ./daily.py src/daily.py          # the script must exist first
+cai jobs create <project> --name Nightly --script src/daily.py   --runtime "workbench python3.12 standard"   --schedule "0 3 * * *" --timezone Europe/Vienna   --arguments "--table foo" --env DENV=prod --cpu 0.5 --memory 2
+```
+
+Five things the API enforces or defaults, all confirmed against a live instance:
+
+- **The script has to be in the project already.** Creating a job with a path
+  that is not there fails with `400 script 'x.py' not found in project
+  directory`. Upload it first, or point at a path `cai files ls` shows.
+- **`--runtime` or `--kernel`, decided by the project, not by preference.** A
+  project whose `default_engine_type` is `ml_runtime` requires
+  `runtime_identifier`; a legacy-engine project takes `kernel` (`python3`,
+  `python2`, `r`, `scala`) and must not be given a runtime. `cai jobs create`
+  reads the project and refuses the wrong one rather than forwarding a 400.
+  `--runtime` accepts the full image identifier or terms matching exactly one
+  from `cai runtimes list`; ambiguous terms are refused, never resolved to the
+  first hit, because the runtime decides what is installed in the job.
+- **`timezone` defaults to `America/Los_Angeles`.** Not the instance's timezone,
+  not the caller's. A cron of `0 3 * * *` without `--timezone` therefore runs at
+  3am Pacific, and `cai jobs create` warns about exactly this. Always pass one
+  with a schedule.
+- **A schedule makes the job live immediately** — recurring jobs are created
+  un-paused, so `--paused` is the way to create one without arming it. No
+  schedule at all means `type: manual`: it runs only when something runs it.
+- **The API may add runtime addons you did not ask for.** A job created with no
+  `--addon` came back carrying `hadoop-cli-...`. Read
+  `runtime_addon_identifiers` off the created job instead of assuming it is
+  empty, and pass `--addon` explicitly when a job needs Spark or the Hadoop CLI.
+
+**Nothing here deletes a job.** A job created by mistake has to be removed from
+the CML UI, so check the name and the project before creating, and prefer
+creating manual jobs while iterating.
+
+Two ids that are easy to confuse: the number in a CML UI URL
+(`/jobs/5525/settings`) is **not** the API's job id, and the API rejects it —
+`400 Problem with field JobId: value length must be 19 runes`. API job ids look
+like `0d10-o6va-nd9j-p6wx`, and `cai jobs list` is how you get from a name to
+one.
 
 ## Answering "how do I do X against the API?"
 

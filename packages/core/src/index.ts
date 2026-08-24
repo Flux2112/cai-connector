@@ -62,7 +62,14 @@ export {
   uploadFile,
   type FileInfo,
 } from "./operations/files";
-export { getJob, listJobs, type Job, type ListJobsOptions } from "./operations/jobs";
+export {
+  createJob,
+  getJob,
+  listJobs,
+  type CreateJobOptions,
+  type Job,
+  type ListJobsOptions,
+} from "./operations/jobs";
 export {
   getProject,
   listProjects,

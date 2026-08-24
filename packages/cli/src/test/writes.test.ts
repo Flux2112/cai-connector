@@ -219,6 +219,155 @@ test("jobs run --wait exits WORKLOAD on a failed run, still printing it", async 
   );
 });
 
+/* A project's engine type decides which of the two engine fields is legal, so the
+ * fixture has to say which kind it is. */
+const RUNTIME_PROJECT = { ...PROJECT, default_engine_type: "ml_runtime" };
+
+test("jobs create posts the job definition it was given", async () => {
+  await withStub(
+    (req) => (req.method === "POST" ? { json: { id: "j-9", name: "Nightly", type: "cron" } } : { json: RUNTIME_PROJECT }),
+    async ({ url, requests }) => {
+      const result = await runCommand([
+        "jobs", "create", "p-1",
+        "--name", "Nightly",
+        "--script", "src/daily.py",
+        "--runtime", "docker.repo/cloudera/runtime:2026.04.1-b7",
+        "--schedule", "0 3 * * *",
+        "--timezone", "Europe/Vienna",
+        "--arguments", "--table foo",
+        "--env", "RUN_MODE=full",
+        "--cpu", "0,5",
+        "--memory", "2",
+        ...creds(url),
+      ]);
+      assert.equal(result.exitCode, 0);
+      assert.equal(JSON.parse(result.stdout).id, "j-9");
+
+      const created = requests[requests.length - 1];
+      assert.equal(created.method, "POST");
+      assert.equal(created.url, "/api/v2/projects/p-1/jobs");
+      const body = JSON.parse(created.body);
+      assert.equal(body.name, "Nightly");
+      assert.equal(body.script, "src/daily.py");
+      assert.equal(body.runtime_identifier, "docker.repo/cloudera/runtime:2026.04.1-b7");
+      assert.equal(body.schedule, "0 3 * * *");
+      assert.equal(body.timezone, "Europe/Vienna");
+      assert.equal(body.arguments, "--table foo");
+      assert.deepEqual(body.environment, { RUN_MODE: "full" });
+      /* A comma decimal is accepted, as everywhere else in this CLI. */
+      assert.equal(body.cpu, 0.5);
+      assert.equal(body.memory, 2);
+      assert.equal(body.kernel, undefined);
+    },
+  );
+});
+
+test("jobs create resolves runtime terms to exactly one identifier", async () => {
+  await withStub(
+    (req) => {
+      if (req.method === "POST") return { json: { id: "j-9" } };
+      if (req.url.startsWith("/api/v2/runtimes")) {
+        return {
+          json: {
+            runtimes: [
+              { image_identifier: "repo/ml-runtime-workbench-python3.12-standard:2026.04.1-b7", editor: "Workbench" },
+              { image_identifier: "repo/ml-runtime-jupyterlab-python3.11-standard:2026.04.1-b7", editor: "JupyterLab" },
+            ],
+          },
+        };
+      }
+      return { json: RUNTIME_PROJECT };
+    },
+    async ({ url, requests }) => {
+      const result = await runCommand([
+        "jobs", "create", "p-1", "--name", "N", "--script", "s.py",
+        "--runtime", "jupyterlab python3.11", ...creds(url),
+      ]);
+      assert.equal(result.exitCode, 0);
+      const body = JSON.parse(requests[requests.length - 1].body);
+      assert.equal(body.runtime_identifier, "repo/ml-runtime-jupyterlab-python3.11-standard:2026.04.1-b7");
+    },
+  );
+});
+
+test("jobs create refuses ambiguous runtime terms rather than picking one", async () => {
+  await withStub(
+    (req) =>
+      req.url.startsWith("/api/v2/runtimes")
+        ? { json: { runtimes: [{ image_identifier: "repo/a-python3.12:1" }, { image_identifier: "repo/b-python3.12:1" }] } }
+        : { json: RUNTIME_PROJECT },
+    async ({ url, requests }) => {
+      const result = await runCommand([
+        "jobs", "create", "p-1", "--name", "N", "--script", "s.py", "--runtime", "python3.12", ...creds(url),
+      ]);
+      assert.equal(result.exitCode, EXIT.USAGE);
+      assert.match(parseReport(result.stderr).error, /matches 2 runtimes/);
+      assert.ok(
+        requests.every((r) => r.method !== "POST"),
+        "an ambiguous runtime must not create a job",
+      );
+    },
+  );
+});
+
+test("jobs create requires the engine field the project actually uses", async () => {
+  await withStub(
+    () => ({ json: RUNTIME_PROJECT }),
+    async ({ url, requests }) => {
+      const result = await runCommand(["jobs", "create", "p-1", "--name", "N", "--script", "s.py", ...creds(url)]);
+      assert.equal(result.exitCode, EXIT.USAGE);
+      assert.match(parseReport(result.stderr).error, /ML Runtimes project, so --runtime is required/);
+      assert.ok(requests.every((r) => r.method !== "POST"));
+    },
+  );
+});
+
+test("jobs create rejects contradictory or meaningless flags before any request", async () => {
+  await withStub(
+    () => ({ json: RUNTIME_PROJECT }),
+    async ({ url, requests }) => {
+      const both = await runCommand([
+        "jobs", "create", "p-1", "--name", "N", "--script", "s.py",
+        "--runtime", "repo/x:1", "--kernel", "python3", ...creds(url),
+      ]);
+      assert.equal(both.exitCode, EXIT.USAGE);
+      assert.match(parseReport(both.stderr).error, /alternatives/);
+
+      const tz = await runCommand([
+        "jobs", "create", "p-1", "--name", "N", "--script", "s.py",
+        "--runtime", "repo/x:1", "--timezone", "Europe/Vienna", ...creds(url),
+      ]);
+      assert.equal(tz.exitCode, EXIT.USAGE);
+      assert.match(parseReport(tz.stderr).error, /only means anything with --schedule/);
+
+      assert.equal(requests.length, 0, "nothing may be resolved before the flags make sense");
+    },
+  );
+});
+
+/* The API's timezone default is America/Los_Angeles, so a cron schedule without
+ * one runs at a time nobody asked for. Warned about, not silently substituted. */
+test("jobs create warns when a schedule has no timezone", async () => {
+  await withStub(
+    (req) => (req.method === "POST" ? { json: { id: "j-9" } } : { json: RUNTIME_PROJECT }),
+    async ({ url, requests }) => {
+      const result = await runCommand([
+        "jobs", "create", "p-1", "--name", "N", "--script", "s.py",
+        "--runtime", "repo/x:1", "--schedule", "0 3 * * *", ...creds(url),
+      ]);
+      assert.equal(result.exitCode, 0);
+      assert.match(result.stderr, /America\/Los_Angeles/);
+      assert.equal(JSON.parse(requests[requests.length - 1].body).timezone, undefined);
+    },
+  );
+});
+
+test("there is no command that deletes a job", async () => {
+  const result = await runCommand(["jobs", "delete", "p-1", "j-1"]);
+  assert.notEqual(result.exitCode, 0);
+  assert.doesNotMatch(result.stdout, /deleted/i);
+});
+
 test("runs stop names one run and uses the custom method", async () => {
   await withStub(
     (req) => (req.url.includes(":stop") ? { json: { id: "r-1", status: "ENGINE_STOPPING" } } : { json: PROJECT }),

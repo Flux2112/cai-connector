@@ -62,6 +62,10 @@ cai files put <project> <local> [remote]     upload a file  [--force]
 
 cai jobs list <project> [--name N]           jobs defined in a project
 cai jobs get  <project> <job>
+cai jobs create <project> --name N --script S   define a job  [--runtime|--kernel
+                                                --schedule "0 3 * * *" --timezone TZ
+                                                --arguments "A B C" --env K=V
+                                                --cpu C --memory G --addon ID --paused]
 cai jobs run  <project> <job>                start a run  [--wait --timeout S --env K=V
                                                           --arguments "A B C"]
 cai runs list <project> <job> [--status S]   runs of one job
@@ -156,10 +160,24 @@ it off; `CAI_SKILLS_DIR` sends it somewhere else.
   `$CAI_URL/api/v2/swagger.json`, and that path needs no credential — 118 paths, including
   operations this CLI deliberately does not wrap. `cai raw /api/v2/swagger.json` fetches the
   same thing. Read it rather than guessing at a request shape.
-- **`--arguments` and `--env` are not the same override.** `arguments` is one string appended
-  to the job's script invocation, so the script sees it as argv and `--arguments "A B C"`
-  passes three arguments; `--env` is repeatable `NAME=value` and travels as a JSON object.
-  Both apply to that run only and leave the job's own definition alone.
+- **`--arguments` reaches the script as an environment variable, not as argv.** CML puts the
+  whole string in `JOB_ARGUMENTS`; splitting it is the script's own job, and a script reading
+  only `sys.argv` gets nothing. The usual line is
+  `sys.argv.extend(shlex.split(os.environ.get("JOB_ARGUMENTS", "")))`. `--env` is repeatable
+  `NAME=value` and travels as a JSON object. On `jobs run` both apply to that run only.
+- **`jobs create` needs the script to exist in the project already** — the API answers
+  `400 script 'x.py' not found in project directory` otherwise, so `cai files put` comes
+  first. Which engine field applies is the project's choice, not yours: an ML Runtimes
+  project requires `--runtime`, a legacy-engine one `--kernel`. `--runtime` takes the full
+  image identifier or terms matching exactly one runtime; ambiguity is refused rather than
+  guessed.
+- **A schedule without `--timezone` runs on Pacific time.** The API's default is
+  `America/Los_Angeles`, so `--schedule "0 3 * * *"` alone does not mean 3am here; the
+  command warns when you leave it out. Scheduled jobs are also created un-paused, so
+  `--paused` is how you define one without arming it.
+- **Nothing deletes a job.** An unwanted job has to be removed from the CML UI. The number in
+  a CML UI URL is not the API's job id either — the API rejects it outright — so use
+  `cai jobs list` to get the `xxxx-xxxx-xxxx-xxxx` form.
 - `files ls` returns names relative to the directory listed, not paths from the project
   root — listing `data` gives `raw`, not `data/raw`.
 - `files get` writes bytes verbatim, so binary files survive intact. Without `-o` the bytes
