@@ -16,12 +16,13 @@
  */
 
 import { Flags } from "@oclif/core";
-import { createJob, listRuntimes, resolveProject, type Job } from "@defysoftware/cai-core";
+import { createJob, resolveProject, type Job } from "@defysoftware/cai-core";
 
 import { BaseCommand } from "../../baseCommand";
 import { CaiCliError, EXIT } from "../../lib/exit";
 import { projectArg } from "../../lib/flags";
 import { parseEnvironment } from "../../lib/env";
+import { resolveRuntimeIdentifier } from "../../lib/runtime";
 import { positiveNumber } from "../../lib/spec";
 
 export default class JobsCreate extends BaseCommand<typeof JobsCreate> {
@@ -122,7 +123,7 @@ export default class JobsCreate extends BaseCommand<typeof JobsCreate> {
     }
 
     const runtimeIdentifier =
-      this.flags.runtime === undefined ? undefined : await this.resolveRuntime(this.flags.runtime);
+      this.flags.runtime === undefined ? undefined : await resolveRuntimeIdentifier(client, this.flags.runtime);
 
     /* A cron schedule with no timezone is the single easiest way to create a job
      * that runs at the wrong time, since the API's default is Pacific. Warned
@@ -160,39 +161,5 @@ export default class JobsCreate extends BaseCommand<typeof JobsCreate> {
     ]);
 
     return job;
-  }
-
-  /**
-   * Accept either the full image identifier or terms that match exactly one.
-   *
-   * The identifiers are long container paths, so retyping one is its own source
-   * of error; but a wrong runtime silently changes what is installed in the job,
-   * so an ambiguous match is refused rather than resolved to the first hit.
-   */
-  private async resolveRuntime(requested: string): Promise<string> {
-    if (requested.includes(":") || requested.includes("/")) {
-      return requested;
-    }
-
-    const terms = requested.toLowerCase().split(/\s+/).filter(Boolean);
-    const runtimes = await listRuntimes(this.client(), {});
-    const matches = runtimes.filter((runtime) => {
-      const haystack = JSON.stringify(runtime).toLowerCase();
-      return terms.every((term) => haystack.includes(term));
-    });
-
-    const identifiers = [...new Set(matches.map((m) => m.image_identifier).filter(Boolean))] as string[];
-    if (identifiers.length === 0) {
-      throw new CaiCliError(`no runtime matches ${JSON.stringify(requested)}; see \`cai runtimes list\``, EXIT.USAGE);
-    }
-    if (identifiers.length > 1) {
-      throw new CaiCliError(
-        `${JSON.stringify(requested)} matches ${identifiers.length} runtimes; be more specific:\n  ${identifiers
-          .slice(0, 8)
-          .join("\n  ")}`,
-        EXIT.USAGE,
-      );
-    }
-    return identifiers[0];
   }
 }

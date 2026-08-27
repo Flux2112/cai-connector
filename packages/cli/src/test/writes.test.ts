@@ -362,6 +362,124 @@ test("jobs create warns when a schedule has no timezone", async () => {
   );
 });
 
+/* The job `jobs update` reads back when it has to settle the runtime/addon
+ * pair, and the shape its own answer takes. */
+const RUNTIME_JOB = {
+  id: "j-1",
+  name: "Nightly",
+  script: "src/daily.py",
+  type: "cron",
+  schedule: "0 3 * * *",
+  runtime_identifier: "repo/ml-runtime-workbench-python3.12-standard:2026.04.1-b7",
+  runtime_addon_identifiers: ["hadoop-cli-7.1.9", "spark332"],
+  environment: "",
+};
+
+function jobStub(patched: Record<string, unknown> = {}): (req: StubRequest) => StubReply {
+  return (req) => {
+    if (req.method === "PATCH") {
+      return { json: { ...RUNTIME_JOB, ...JSON.parse(req.body || "{}"), ...patched } };
+    }
+    if (req.url.includes("/jobs/")) {
+      return { json: RUNTIME_JOB };
+    }
+    return { json: RUNTIME_PROJECT };
+  };
+}
+
+test("jobs update patches only the fields it was given", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const result = await runCommand([
+      "jobs", "update", "p-1", "j-1",
+      "--name", "Renamed",
+      "--schedule", "0 4 * * *",
+      "--env", "RUN_MODE=full",
+      ...creds(url),
+    ]);
+    assert.equal(result.exitCode, 0);
+
+    const patch = requests[requests.length - 1];
+    assert.equal(patch.method, "PATCH");
+    assert.equal(patch.url, "/api/v2/projects/p-1/jobs/j-1");
+    assert.deepEqual(JSON.parse(patch.body), {
+      name: "Renamed",
+      schedule: "0 4 * * *",
+      environment: '{"RUN_MODE":"full"}',
+    });
+  });
+});
+
+test("jobs update refuses an empty update rather than bumping the job's timestamp", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const result = await runCommand(["jobs", "update", "p-1", "j-1", ...creds(url)]);
+    assert.equal(result.exitCode, EXIT.USAGE);
+    assert.match(parseReport(result.stderr).error, /nothing to update/);
+    assert.equal(requests.length, 0, "an empty update must not reach the wire");
+  });
+});
+
+/* Both fields come back unchanged on a 200, so a flag that forwarded them would
+ * report a change that did not happen. */
+test("jobs update refuses the two fields the API silently ignores", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const tz = await runCommand(["jobs", "update", "p-1", "j-1", "--timezone", "Europe/Vienna", ...creds(url)]);
+    assert.equal(tz.exitCode, EXIT.USAGE);
+    assert.match(parseReport(tz.stderr).error, /ignores a timezone on update/);
+
+    const paused = await runCommand(["jobs", "update", "p-1", "j-1", "--no-paused", ...creds(url)]);
+    assert.equal(paused.exitCode, EXIT.USAGE);
+    assert.match(parseReport(paused.stderr).error, /no pause operation/);
+
+    assert.equal(requests.length, 0);
+  });
+});
+
+test("jobs update sends addons with the job's current runtime, which the API demands", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const result = await runCommand(["jobs", "update", "p-1", "j-1", "--addon", "spark332", ...creds(url)]);
+    assert.equal(result.exitCode, 0);
+
+    const body = JSON.parse(requests[requests.length - 1].body);
+    /* Addons alone are a 500, so the job is read first to supply the other half. */
+    assert.equal(body.runtime_identifier, RUNTIME_JOB.runtime_identifier);
+    assert.deepEqual(body.runtime_addon_identifiers, ["spark332"]);
+  });
+});
+
+test("jobs update carries the current addons over a runtime change, and says so", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const result = await runCommand([
+      "jobs", "update", "p-1", "j-1", "--runtime", "repo/other-runtime:1", ...creds(url),
+    ]);
+    assert.equal(result.exitCode, 0);
+    /* A runtime sent on its own resets the addons to the API's defaults, which
+     * is silent data loss unless they are re-sent. */
+    assert.deepEqual(
+      JSON.parse(requests[requests.length - 1].body).runtime_addon_identifiers,
+      RUNTIME_JOB.runtime_addon_identifiers,
+    );
+    assert.match(result.stderr, /carrying the job's current addons over/);
+  });
+});
+
+test("jobs update --manual clears the schedule", async () => {
+  await withStub(jobStub(), async ({ url, requests }) => {
+    const result = await runCommand(["jobs", "update", "p-1", "j-1", "--manual", ...creds(url)]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(JSON.parse(requests[requests.length - 1].body).schedule, "");
+  });
+});
+
+/* The instance answers 200 for fields it then ignores, so the command checks the
+ * job it got back instead of trusting the status code. */
+test("jobs update warns when the instance did not apply what was asked", async () => {
+  await withStub(jobStub({ name: "Nightly" }), async ({ url }) => {
+    const result = await runCommand(["jobs", "update", "p-1", "j-1", "--name", "Renamed", ...creds(url)]);
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stderr, /did not apply: --name/);
+  });
+});
+
 test("there is no command that deletes a job", async () => {
   const result = await runCommand(["jobs", "delete", "p-1", "j-1"]);
   assert.notEqual(result.exitCode, 0);

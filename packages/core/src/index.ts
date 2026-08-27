@@ -66,9 +66,11 @@ export {
   createJob,
   getJob,
   listJobs,
+  updateJob,
   type CreateJobOptions,
   type Job,
   type ListJobsOptions,
+  type UpdateJobOptions,
 } from "./operations/jobs";
 export {
   getProject,
