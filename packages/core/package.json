@@ -1,6 +1,6 @@
 {
   "name": "@defysoftware/cai-core",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "description": "Typed client for the Cloudera AI (CML) API v2. Zero runtime dependencies.",
   "license": "GPL-3.0-or-later",
   "repository": {
