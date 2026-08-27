@@ -27,6 +27,7 @@ import {
   stopApplication,
 } from "../operations/applications";
 import { assertUploadPath, uploadFile } from "../operations/files";
+import { updateJob } from "../operations/jobs";
 import {
   createJobRun,
   isRunFinished,
@@ -224,6 +225,58 @@ test("restart, stop and get address the application paths the spec declares", as
           "POST /api/v2/projects/p-1/applications/a-1:stop",
         ],
       );
+    },
+  );
+});
+
+/* ---------------------------------------------------------------- jobs */
+
+test("updateJob patches only the fields it was given, at the path the spec declares", async () => {
+  await withStub(
+    () => ({ json: { id: "j-1", name: "Nightly" } }),
+    async ({ client, stub }) => {
+      await updateJob(client, "p-1", "j-1", { name: "Nightly", schedule: "0 4 * * *", timeoutSeconds: 600 });
+
+      const request = stub.requests[0];
+      assert.equal(request.method, "PATCH");
+      /* The spec names this parameter `job.id`, not `job_id` — the other job
+       * paths use the latter, so the two are easy to mix up. */
+      assert.equal(request.url, "/api/v2/projects/p-1/jobs/j-1");
+      assert.deepEqual(JSON.parse(request.body), {
+        name: "Nightly",
+        schedule: "0 4 * * *",
+        /* A string, as the `Job` schema has it — the create request takes a
+         * number for the same idea. */
+        timeout: "600",
+      });
+    },
+  );
+});
+
+test("updateJob sends the environment as a JSON string", async () => {
+  await withStub(
+    () => ({ json: { id: "j-1" } }),
+    async ({ client, stub }) => {
+      await updateJob(client, "p-1", "j-1", { environment: { SPLIT: "test" } });
+
+      /* An object here is a 400: `cannot unmarshal object into Go value of type
+       * string`, unlike CreateJob which takes one. */
+      assert.deepEqual(JSON.parse(stub.requests[0].body), { environment: '{"SPLIT":"test"}' });
+    },
+  );
+});
+
+test("updateJob refuses addons without a runtime before anything reaches the wire", async () => {
+  await withStub(
+    () => ({ json: { id: "j-1" } }),
+    async ({ client, stub }) => {
+      /* Alone they are a 500 — `failed to fetch existing runtime for job` — so
+       * the pairing is refused here rather than turned into a server error. */
+      await assert.rejects(
+        () => updateJob(client, "p-1", "j-1", { addonIdentifiers: ["spark332"] }),
+        (err: unknown) => err instanceof CaiRequestError && /together with the runtime identifier/.test(err.message),
+      );
+      assert.equal(stub.requests.length, 0);
     },
   );
 });

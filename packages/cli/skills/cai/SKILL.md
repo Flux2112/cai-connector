@@ -53,7 +53,8 @@ never be read as "the thing is gone".
 ## Writes: safe ones only
 
 There is no delete anywhere in this CLI, and `cai raw` accepts only GET. What
-exists: `files put`, `jobs run`, `runs stop`, `apps restart|stop`.
+exists: `files put`, `jobs create`, `jobs update`, `jobs run`, `runs stop`,
+`apps restart|stop`.
 
 ```bash
 cai jobs run <project> <job> --wait --timeout 900   # exit 8 if the run failed
@@ -92,7 +93,10 @@ job did start, so retrying starts it a second time.
 
 ```bash
 cai files put <project> ./daily.py src/daily.py          # the script must exist first
-cai jobs create <project> --name Nightly --script src/daily.py   --runtime "workbench python3.12 standard"   --schedule "0 3 * * *" --timezone Europe/Vienna   --arguments "--table foo" --env DENV=prod --cpu 0.5 --memory 2
+cai jobs create <project> --name Nightly --script src/daily.py \
+  --runtime "workbench python3.12 standard" \
+  --schedule "0 3 * * *" --timezone Europe/Vienna \
+  --arguments "--table foo" --env DENV=prod --cpu 0.5 --memory 2
 ```
 
 Five things the API enforces or defaults, all confirmed against a live instance:
@@ -119,6 +123,38 @@ Five things the API enforces or defaults, all confirmed against a live instance:
   `--addon` came back carrying `hadoop-cli-...`. Read
   `runtime_addon_identifiers` off the created job instead of assuming it is
   empty, and pass `--addon` explicitly when a job needs Spark or the Hadoop CLI.
+
+## Editing a job
+
+```bash
+cai jobs update <project> <job> --name Nightly --schedule "0 4 * * *"
+cai jobs update <project> <job> --manual                 # drop the schedule
+cai jobs update <project> <job> --runtime <id> --addon <addon-id>
+```
+
+Only the flags you pass change; everything else is left alone, and the answer is
+the updated job. Four things confirmed against a live instance on 2026-08-27:
+
+- **Three fields are accepted and then ignored: `paused`, `timezone` and the
+  recipient lists.** The PATCH answers 200 and the value comes back unchanged,
+  which is the worst shape a failure can take. API v2 has no pause operation
+  anywhere either, so **pausing, unpausing or fixing a job's timezone is not
+  possible through the API** — recreate the job, or use the CML UI. `cai jobs
+  update --timezone`/`--paused` exist only to tell you this instead of failing
+  with "nonexistent flag".
+- **Addons and the runtime travel together or not at all.** `runtime_addon_identifiers`
+  alone is a 500 (`failed to fetch existing runtime for job`), and
+  `runtime_identifier` alone silently *resets* the addons to the API's defaults.
+  `cai jobs update` reads the job first and re-sends whichever half you omitted,
+  warning when it carries addons over; raw PATCH callers must do the same.
+- **Empty means different things per field.** `arguments: ""` and `schedule: ""`
+  really clear those (and clearing the schedule flips `type` to `manual`, just as
+  setting one flips it to `cron`), but `environment: ""` is read as "unset" and
+  changes nothing — send `{}` to clear it. `--env` replaces the whole
+  environment; it does not merge.
+- **`script` is validated, `kernel` is not.** A path that is not in the project
+  fails the same way as on create, but a `kernel` sent to a job on an ML Runtimes
+  project is accepted, leaving the job carrying both. No `cai` flag reaches it.
 
 **Nothing here deletes a job.** A job created by mistake has to be removed from
 the CML UI, so check the name and the project before creating, and prefer

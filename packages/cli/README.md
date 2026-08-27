@@ -12,8 +12,8 @@ person reading a screen:
 - **No prompts** unless stdin is a terminal.
 - Colour is off unless `FORCE_COLOR` is set.
 
-Reads plus **safe writes**: a file can be uploaded, a job run started or stopped, an
-application restarted or stopped. **Nothing here deletes anything** — no project, model,
+Reads plus **safe writes**: a file can be uploaded, a job defined or edited, a job run
+started or stopped, an application restarted or stopped. **Nothing here deletes anything** — no project, model,
 job, file or application. That is enforced by the command surface, not by a check: no `cai`
 verb maps to a destructive path, and `cai raw` refuses any verb but GET.
 
@@ -66,6 +66,9 @@ cai jobs create <project> --name N --script S   define a job  [--runtime|--kerne
                                                 --schedule "0 3 * * *" --timezone TZ
                                                 --arguments "A B C" --env K=V
                                                 --cpu C --memory G --addon ID --paused]
+cai jobs update <project> <job>              edit a job   [same field flags, minus
+                                                --timezone and --paused; --manual
+                                                drops the schedule]
 cai jobs run  <project> <job>                start a run  [--wait --timeout S --env K=V
                                                           --arguments "A B C"]
 cai runs list <project> <job> [--status S]   runs of one job
@@ -175,6 +178,16 @@ it off; `CAI_SKILLS_DIR` sends it somewhere else.
   `America/Los_Angeles`, so `--schedule "0 3 * * *"` alone does not mean 3am here; the
   command warns when you leave it out. Scheduled jobs are also created un-paused, so
   `--paused` is how you define one without arming it.
+- **`jobs update` is a true partial update, with three fields it cannot touch.** Only the
+  flags you pass are changed; everything else is left alone, and the answer is the updated
+  job. But `paused`, `timezone` and the recipient lists are accepted with a 200 and then
+  ignored — and API v2 has no pause operation at all — so pausing, unpausing or fixing a
+  timezone means recreating the job. `--timezone` and `--paused` exist only to say so.
+  `--env` replaces the whole environment rather than merging into it, `--arguments ""`
+  clears the arguments, and `--schedule ""` (or `--manual`) turns a scheduled job back into
+  a manual one. Addons are the trap: the API rejects them unless `runtime_identifier` comes
+  along, and a runtime sent *without* them resets them, so `jobs update` reads the job first
+  and re-sends whichever half you left out — telling you when it carried addons over.
 - **Nothing deletes a job.** An unwanted job has to be removed from the CML UI. The number in
   a CML UI URL is not the API's job id either — the API rejects it outright — so use
   `cai jobs list` to get the `xxxx-xxxx-xxxx-xxxx` form.
