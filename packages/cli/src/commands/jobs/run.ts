@@ -29,6 +29,7 @@ import { BaseCommand } from "../../baseCommand";
 import { CaiCliError, EXIT } from "../../lib/exit";
 import { projectArg } from "../../lib/flags";
 import { parseEnvironment } from "../../lib/env";
+import type { Column } from "../../lib/output";
 
 /**
  * What a finished run is worth printing.
@@ -45,6 +46,24 @@ export type RunSummary = {
   started?: string;
   finished?: string;
 };
+
+function summarize(run: JobRun): RunSummary {
+  return { id: run.id, status: run.status, started: run.running_at, finished: run.finished_at };
+}
+
+const SUMMARY_COLUMNS: Column<RunSummary>[] = [
+  { header: "id", get: (r) => r.id },
+  { header: "status", get: (r) => r.status },
+  { header: "started", get: (r) => r.started },
+  { header: "finished", get: (r) => r.finished },
+];
+
+const RUN_COLUMNS: Column<JobRun>[] = [
+  { header: "id", get: (r) => r.id },
+  { header: "status", get: (r) => r.status },
+  { header: "created", get: (r) => r.created_at },
+  { header: "finished", get: (r) => r.finished_at },
+];
 
 export default class JobsRun extends BaseCommand<typeof JobsRun> {
   static description = [
@@ -110,22 +129,7 @@ export default class JobsRun extends BaseCommand<typeof JobsRun> {
       });
     }
 
-    const shown = this.flags.wait
-      ? this.emit<RunSummary>(
-          { id: run.id, status: run.status, started: run.running_at, finished: run.finished_at },
-          [
-            { header: "id", get: (r) => r.id },
-            { header: "status", get: (r) => r.status },
-            { header: "started", get: (r) => r.started },
-            { header: "finished", get: (r) => r.finished },
-          ],
-        )
-      : this.emit(run, [
-          { header: "id", get: (r) => r.id },
-          { header: "status", get: (r) => r.status },
-          { header: "created", get: (r) => r.created_at },
-          { header: "finished", get: (r) => r.finished_at },
-        ]);
+    const shown = this.flags.wait ? this.emit(summarize(run), SUMMARY_COLUMNS) : this.emit(run, RUN_COLUMNS);
 
     /* Set rather than thrown: the run is real and its JSON has already been
      * printed, so failing here would replace the useful output with an error

@@ -118,7 +118,11 @@ command therefore replaces it with a marker naming the way back:
 - `--show-env` prints the blob with **credential-shaped names masked** and everything else
   intact — `PYTHONPATH` stays readable, `CML_USER_PW` becomes `***`. Names are judged on
   shape: `*PASSWORD*`, `*SECRET*`, `*CREDENTIAL*`, a `PW` or `TOKEN` part, and a `KEY` part
-  qualified by `API`, `PRIVATE`, `ACCESS` and the like.
+  qualified by `API`, `PRIVATE`, `ACCESS` and the like. A part, not a substring, so
+  `TOKENIZER` and `PARTITION_KEY` stay readable — and `camelCase` is split the same way, so
+  `apiToken` is treated exactly like `API_TOKEN`. The names CML itself injects
+  (`CML_USER_PW`, `IAM_PASSWORD`, `CDSW_API_KEY`, `CDSW_APIV2_KEY`) are listed outright as
+  a floor under those patterns.
 - `--reveal` prints it verbatim and warns on stderr that it did.
 - Nothing else changes: ids, status and exit codes are all fully usable without the blob, so
   no script is ever pushed to `--show-env` just to work.

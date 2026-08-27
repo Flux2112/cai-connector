@@ -247,11 +247,13 @@ test("an empty environment is left as it is rather than reported as hidden", () 
   assert.equal(sanitizeOutput({ environment: null }, "hide").environment, null);
 });
 
-test("an environment that is not a JSON object is hidden too, since it cannot be inspected", () => {
-  const hidden = sanitizeOutput({ environment: "not json at all" }, "hide");
-  assert.equal(hidden.environment, "hidden — pass --show-env");
-  const masked = sanitizeOutput({ environment: "not json at all" }, "mask");
-  assert.match(masked.environment as string, /--reveal/);
+test("an environment that is not a JSON object is hidden too, and points at the flag that works", () => {
+  /* `--show-env` masks name by name, so it cannot show a blob whose names it
+   * cannot read. Naming it here would send the reader one hop wrong. */
+  for (const mode of ["hide", "mask"] as const) {
+    const hidden = sanitizeOutput({ environment: "not json at all" }, mode);
+    assert.equal(hidden.environment, "hidden (not a JSON object) — pass --reveal");
+  }
 });
 
 test("--show-env keeps the diagnostic values and masks only the credential-shaped names", () => {
@@ -290,6 +292,26 @@ test("the deny-list catches the shapes a credential name takes, and nothing else
   }
   for (const name of ["CML_USER", "PYTHONPATH", "SPARK_HOME", "PARTITION_KEY", "PWD_STYLE_PATH", "TOKENIZER"]) {
     assert.equal(isSecretName(name), false, `${name} must stay readable`);
+  }
+});
+
+test("a camelCase name is judged the same as its SCREAMING_SNAKE twin", () => {
+  /* Both spellings turn up in a real environment, and `apiToken` is exactly as
+   * much of a credential as `API_TOKEN`. */
+  for (const name of ["apiToken", "authToken", "sessionToken", "privateKey", "dbPassword"]) {
+    assert.equal(isSecretName(name), true, `${name} must be masked`);
+  }
+  for (const name of ["tokenizer", "partitionKey", "pythonPath"]) {
+    assert.equal(isSecretName(name), false, `${name} must stay readable`);
+  }
+});
+
+test("the two credentials CML injects are named outright, not left to the patterns", () => {
+  /* The patterns catch both today. The list is the floor under them: what a
+   * name looks like is a judgement that may be narrowed, what this platform
+   * puts in every environment is not. */
+  for (const name of ["CML_USER_PW", "IAM_PASSWORD", "CDSW_API_KEY", "CDSW_APIV2_KEY"]) {
+    assert.equal(isSecretName(name), true, `${name} must be masked`);
   }
 });
 

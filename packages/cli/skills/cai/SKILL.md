@@ -75,9 +75,11 @@ sys.argv.extend(shlex.split(os.environ.get("JOB_ARGUMENTS", "")))
 
 So `arguments` is ONE string with no list form, `--env` is repeatable
 `NAME=value` and becomes a JSON object, and both are per-run overrides that leave
-the job definition alone. The created run echoes both back — read `arguments` off
-it rather than assuming, and add `--show-env` when you need to confirm the
-environment landed (see below for why it is hidden by default).
+the job definition alone. The created run echoes both back, so without `--wait`
+read `arguments` off it rather than assuming; with `--wait` the print is only the
+status summary, so confirm either with
+`cai runs get <project> <job> <run> --show-env` (see below for why the
+environment is hidden by default).
 
 **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
 occupied path keeps the old file and stores yours as `name(1).ext`, answering 200

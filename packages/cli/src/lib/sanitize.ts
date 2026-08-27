@@ -35,49 +35,81 @@ const ENV_FIELD = "environment";
 /** Same placeholder the extension and core use for a redacted secret. */
 const MASKED = "***";
 
+/** The way back, spelled once. A marker that names a flag which would not in
+ *  fact show that particular value sends the reader one hop wrong. */
+const SHOW_ENV = "pass --show-env";
+const REVEAL = "pass --reveal";
+
 /**
- * Names whose *value* is a secret whatever the rest of the name says.
+ * The variables CML injects that are credentials, named outright.
  *
- * Substrings rather than segments, so `apiToken`-style camel case is caught as
- * well as `API_TOKEN`. `TOKEN` and `KEY` are deliberately absent from this list
- * and handled below: `TOKENIZER` and `PARTITION_KEY` are ordinary variables and
- * masking them would cost the diagnostic value the whole `--show-env` mode
- * exists to preserve.
+ * The patterns below already catch both, so this list is not what makes today's
+ * case work — it is the floor under it. The patterns are a judgement about what
+ * a name looks like and may be narrowed; these two names are a fact about what
+ * this platform puts in every project's environment, and must survive that.
  */
-const SECRET_SUBSTRINGS = [
-  "PASSWORD",
-  "PASSWD",
-  "PASSPHRASE",
-  "SECRET",
-  "CREDENTIAL",
+const CML_SECRETS = new Set(["CML_USER_PW", "IAM_PASSWORD", "CDSW_API_KEY", "CDSW_APIV2_KEY"]);
+
+/** Names whose *value* is a secret whatever the rest of the name says. */
+const SECRET_SUBSTRINGS = ["PASSWORD", "PASSWD", "PASSPHRASE", "SECRET", "CREDENTIAL"];
+
+/**
+ * Names that are a secret when they stand as a whole part.
+ *
+ * A part, not a substring: `TOKENIZER` and `PARTITION_KEY` are ordinary
+ * variables, and masking them would cost the diagnostic value that `--show-env`
+ * exists to preserve — the report that prompted all this turned on reading
+ * `PYTHONPATH`. `PW` is the CML injection (`CML_USER_PW`); `PWD` is not here,
+ * because it is far more often the working directory.
+ */
+const SECRET_SEGMENTS = new Set([
+  "PW",
+  "TOKEN",
+  "TOKENS",
+  "CREDS",
+  /* The unspaced spellings, which have no case boundary to split on. */
   "APIKEY",
-  "PRIVATEKEY",
   "AUTHKEY",
-];
+  "PRIVATEKEY",
+  "ACCESSKEY",
+]);
 
-/** Names that are a secret when they stand as a whole `_`-separated part.
- *  `PW` is the CML injection (`CML_USER_PW`); `PWD` is not here, because it is
- *  far more often the working directory. */
-const SECRET_SEGMENTS = new Set(["PW", "TOKEN", "TOKENS", "CREDS"]);
-
-/** A `KEY` segment is only a secret when something in the name says which kind:
+/** A `KEY` part is only a secret when another part says which kind:
  *  `CDSW_APIV2_KEY` and `SSH_PRIVATE_KEY` are, `PARTITION_KEY` is not. */
 const KEY_QUALIFIERS = /^(API|APIV\d+|ACCESS|PRIVATE|SIGNING|ENCRYPTION|AUTH)$/;
+
+/**
+ * A name split into its parts, `SCREAMING_SNAKE` and `camelCase` alike.
+ *
+ * Both spellings turn up in a real environment, and `apiToken` is exactly as
+ * much of a credential as `API_TOKEN`. Splitting the case boundary first is what
+ * lets the parts above stay parts rather than being widened to substrings, which
+ * is what would drag `TOKENIZER` in with them.
+ */
+function nameParts(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toUpperCase()
+    .split(/[_\-.]+/)
+    .filter(Boolean);
+}
 
 /** Whether a variable's value must be masked, judged from its name alone. */
 export function isSecretName(name: string): boolean {
   const upper = name.toUpperCase();
+  if (CML_SECRETS.has(upper)) {
+    return true;
+  }
   if (SECRET_SUBSTRINGS.some((needle) => upper.includes(needle))) {
     return true;
   }
 
-  const segments = upper.split(/[_\-.]/);
-  if (segments.some((segment) => SECRET_SEGMENTS.has(segment))) {
+  const parts = nameParts(name);
+  if (parts.some((part) => SECRET_SEGMENTS.has(part))) {
     return true;
   }
   return (
-    (segments.includes("KEY") || segments.includes("KEYS")) &&
-    segments.some((segment) => KEY_QUALIFIERS.test(segment))
+    (parts.includes("KEY") || parts.includes("KEYS")) && parts.some((part) => KEY_QUALIFIERS.test(part))
   );
 }
 
@@ -128,7 +160,10 @@ function sanitizeEnvironment(value: unknown, mode: EnvMode): unknown {
 
   const entries = envEntries(value);
   if (!entries) {
-    return mode === "mask" ? "hidden (not a JSON object) — pass --reveal" : "hidden — pass --show-env";
+    /* `--reveal` in both modes, and deliberately not `--show-env`: masking works
+     * name by name, so a blob whose names cannot be read is one `--show-env`
+     * would hide all over again. Naming it anyway would cost the reader a hop. */
+    return `hidden (not a JSON object) — ${REVEAL}`;
   }
 
   const names = Object.keys(entries);
@@ -137,7 +172,7 @@ function sanitizeEnvironment(value: unknown, mode: EnvMode): unknown {
   }
 
   if (mode === "hide") {
-    return `${names.length} var${names.length === 1 ? "" : "s"} hidden — pass --show-env`;
+    return `${names.length} var${names.length === 1 ? "" : "s"} hidden — ${SHOW_ENV}`;
   }
 
   const masked: Record<string, unknown> = {};
