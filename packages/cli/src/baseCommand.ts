@@ -22,6 +22,7 @@ import { resolveConfig, type Resolution } from "./lib/config";
 import { CaiCliError, EXIT, reportError } from "./lib/exit";
 import { table, type Column } from "./lib/output";
 import { resolveEnvMode, sanitizeOutput } from "./lib/sanitize";
+import { syncSkills } from "./lib/skills";
 
 export type BaseFlags<T extends typeof Command> = Interfaces.InferredFlags<
   (typeof BaseCommand)["baseFlags"] & T["flags"]
@@ -156,6 +157,25 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
     }
     this.log(JSON.stringify(shown, null, 2));
     return shown;
+  }
+
+  /**
+   * The bundled agent skill is brought up to date here, after the command has
+   * printed and whatever it did is done.
+   *
+   * Here rather than in `postinstall` because npm 12 blocks lifecycle scripts
+   * unless the package is allow-listed, so an upgrade otherwise leaves the skill
+   * describing a CLI that no longer behaves that way — and the block is a
+   * warning nobody acts on. Last rather than first so it can never delay an
+   * answer, and on stderr so it can never contaminate stdout.
+   */
+  protected async finally(err: Error | undefined): Promise<unknown> {
+    syncSkills({
+      packageDir: this.config.root,
+      version: this.config.version,
+      report: (line) => process.stderr.write(`cai: ${line}\n`),
+    });
+    return super.finally(err);
   }
 
   /**
