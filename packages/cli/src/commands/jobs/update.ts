@@ -157,15 +157,15 @@ export default class JobsUpdate extends BaseCommand<typeof JobsUpdate> {
       this.warn(`the instance did not apply: ${unapplied.join(", ")}`);
     }
 
-    this.emit(job, [
+    /* The check above reads the real `job`; what leaves the process is what
+     * `emit` returns, with the environment reduced to the mode's marker. */
+    return this.emit(job, [
       { header: "id", get: (j) => j.id },
       { header: "name", get: (j) => j.name },
       { header: "script", get: (j) => j.script },
       { header: "type", get: (j) => j.type },
       { header: "schedule", get: (j) => j.schedule },
     ]);
-
-    return job;
   }
 
   /**

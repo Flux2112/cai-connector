@@ -30,11 +30,27 @@ import { CaiCliError, EXIT } from "../../lib/exit";
 import { projectArg } from "../../lib/flags";
 import { parseEnvironment } from "../../lib/env";
 
+/**
+ * What a finished run is worth printing.
+ *
+ * Waiting is something the caller asked the CLI to do on their behalf, so the
+ * answer owed back is the outcome, not the whole run object — every field of
+ * which `runs get` will hand over on request. That full print is what leaked a
+ * live credential in issue #6, and it leaked while doing something nobody had
+ * asked for.
+ */
+export type RunSummary = {
+  id?: string;
+  status?: string;
+  started?: string;
+  finished?: string;
+};
+
 export default class JobsRun extends BaseCommand<typeof JobsRun> {
   static description = [
     "Start one run of an existing job.",
     "With --wait, polls until the run finishes and exits 8 if it did not succeed or was still running when the wait expired.",
-    "The run is printed either way, so its id is always available.",
+    "The run's id is printed either way; with --wait the print is the status summary rather than the whole run.",
   ].join(" ");
 
   static examples = [
@@ -67,7 +83,7 @@ export default class JobsRun extends BaseCommand<typeof JobsRun> {
     arguments: Flags.string({ description: "Arguments passed to the job's script, as one string." }),
   };
 
-  public async run(): Promise<JobRun> {
+  public async run(): Promise<JobRun | RunSummary> {
     /* Parsed before the client is built, so a mistyped --env costs no calls and
      * cannot half-start anything. */
     const environment = parseEnvironment(this.flags.env);
@@ -94,12 +110,22 @@ export default class JobsRun extends BaseCommand<typeof JobsRun> {
       });
     }
 
-    this.emit(run, [
-      { header: "id", get: (r) => r.id },
-      { header: "status", get: (r) => r.status },
-      { header: "created", get: (r) => r.created_at },
-      { header: "finished", get: (r) => r.finished_at },
-    ]);
+    const shown = this.flags.wait
+      ? this.emit<RunSummary>(
+          { id: run.id, status: run.status, started: run.running_at, finished: run.finished_at },
+          [
+            { header: "id", get: (r) => r.id },
+            { header: "status", get: (r) => r.status },
+            { header: "started", get: (r) => r.started },
+            { header: "finished", get: (r) => r.finished },
+          ],
+        )
+      : this.emit(run, [
+          { header: "id", get: (r) => r.id },
+          { header: "status", get: (r) => r.status },
+          { header: "created", get: (r) => r.created_at },
+          { header: "finished", get: (r) => r.finished_at },
+        ]);
 
     /* Set rather than thrown: the run is real and its JSON has already been
      * printed, so failing here would replace the useful output with an error
@@ -110,6 +136,6 @@ export default class JobsRun extends BaseCommand<typeof JobsRun> {
       process.stderr.write(`${JSON.stringify({ error: `run ${run.id} ${reason}`, code: EXIT.WORKLOAD }, null, 2)}\n`);
     }
 
-    return run;
+    return shown;
   }
 }

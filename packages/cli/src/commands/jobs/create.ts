@@ -152,14 +152,15 @@ export default class JobsCreate extends BaseCommand<typeof JobsCreate> {
       parentJobId: this.flags["parent-job"],
     });
 
-    this.emit(job, [
+    /* What `emit` returns, not `job`: with --json oclif prints the return value,
+     * so returning the raw one would hand the environment blob straight to the
+     * caller the redaction is for. */
+    return this.emit(job, [
       { header: "id", get: (j) => j.id },
       { header: "name", get: (j) => j.name },
       { header: "script", get: (j) => j.script },
       { header: "type", get: (j) => j.type },
       { header: "schedule", get: (j) => j.schedule },
     ]);
-
-    return job;
   }
 }

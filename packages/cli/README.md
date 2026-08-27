@@ -10,6 +10,8 @@ person reading a screen:
 - **Errors are JSON on stderr**, never mixed into stdout.
 - **Exit codes are a contract** (below) — you can branch on them without parsing prose.
 - **No prompts** unless stdin is a terminal.
+- **`environment` blobs are hidden** unless asked for (below) — output that reaches a model
+  context and a saved transcript must not carry credentials nobody asked to see.
 - Colour is off unless `FORCE_COLOR` is set.
 
 Reads plus **safe writes**: a file can be uploaded, a job defined or edited, a job run
@@ -96,6 +98,30 @@ drives `cdswctl.exe` and finds tunnels with a PowerShell process scan.
 
 `<project>` is accepted as `owner/name` or as an opaque project id. Listings take `--limit`
 and `--page-size`; `--verbose` logs each request to stderr with the key redacted.
+`--show-env` and `--reveal` decide how much of an `environment` blob is printed.
+
+## Environment variables in the output
+
+CML injects its own variables into a project's environment, **including plaintext
+credentials** — `CML_USER_PW` and `IAM_PASSWORD` among them. They ride along on every job,
+run and project the API returns, so printing that blob by default put live credentials into
+a terminal, its scrollback, an agent's context window and a saved transcript at once. Every
+command therefore replaces it with a marker naming the way back:
+
+```json
+"environment": "11 vars hidden — pass --show-env"
+```
+
+- The marker is printed rather than the field dropped, so nobody learns the field does not
+  exist. It applies to `--json` as well: the agent path is the one with the widest reach, so
+  it must not be the raw one.
+- `--show-env` prints the blob with **credential-shaped names masked** and everything else
+  intact — `PYTHONPATH` stays readable, `CML_USER_PW` becomes `***`. Names are judged on
+  shape: `*PASSWORD*`, `*SECRET*`, `*CREDENTIAL*`, a `PW` or `TOKEN` part, and a `KEY` part
+  qualified by `API`, `PRIVATE`, `ACCESS` and the like.
+- `--reveal` prints it verbatim and warns on stderr that it did.
+- Nothing else changes: ids, status and exit codes are all fully usable without the blob, so
+  no script is ever pushed to `--show-env` just to work.
 
 ## Exit codes
 
@@ -117,7 +143,8 @@ answer, so "the listing failed" must never be read as "the thing is gone".
 8 is the same idea one level up. `cai jobs run --wait` exits 8 when the run failed, was
 stopped, or was still going when the wait expired — nothing went wrong with the *call*, so a
 caller that read it as a request failure and retried would start the job a second time. The
-run is printed on stdout either way, so its id is always available.
+run's id is printed on stdout either way; with `--wait` the print is `id status started
+finished` rather than the whole run, which `cai runs get` hands over on request.
 
 ## Sessions
 
