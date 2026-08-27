@@ -21,6 +21,7 @@ import { createClient, type CaiClient } from "@defysoftware/cai-core";
 import { resolveConfig, type Resolution } from "./lib/config";
 import { CaiCliError, EXIT, reportError } from "./lib/exit";
 import { table, type Column } from "./lib/output";
+import { resolveEnvMode, sanitizeOutput } from "./lib/sanitize";
 
 export type BaseFlags<T extends typeof Command> = Interfaces.InferredFlags<
   (typeof BaseCommand)["baseFlags"] & T["flags"]
@@ -58,6 +59,15 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
       description: "Log each request to stderr. The API key is redacted.",
       helpGroup: "GLOBAL",
     }),
+    "show-env": Flags.boolean({
+      description:
+        "Print environment blobs, with credential-shaped names masked. They are replaced by a marker otherwise.",
+      helpGroup: "GLOBAL",
+    }),
+    reveal: Flags.boolean({
+      description: "Print environment blobs verbatim, credentials included. Implies --show-env.",
+      helpGroup: "GLOBAL",
+    }),
   };
 
   protected flags!: BaseFlags<T>;
@@ -77,6 +87,15 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
 
     if (this.flags["api-key"]) {
       this.warn("--api-key puts the key in argv, where any process can read it. Prefer $CML_API_KEY.");
+    }
+
+    /* Deliberately noisy, and on every command rather than only when something
+     * was actually revealed: by the time the caller could check, the values are
+     * already in the terminal, the scrollback and any transcript around it. */
+    if (this.flags.reveal) {
+      this.warn(
+        "--reveal prints environment values verbatim, credentials included. They stay in your scrollback and in any transcript of this session.",
+      );
     }
   }
 
@@ -112,23 +131,31 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
   }
 
   /**
-   * Print a result and return it.
+   * Print a result and return what was printed.
    *
-   * Returning the value matters: with `--json` oclif prints the return value
-   * itself, so this suppresses its own output in that case to avoid printing
-   * twice.
+   * Returning the value matters twice over. With `--json` oclif prints the
+   * return value itself, so this suppresses its own output in that case to
+   * avoid printing twice — which also means the *sanitized* value is what has
+   * to come back, or `--json` would become the way around the redaction. A
+   * command must therefore return what `emit` handed it rather than the object
+   * it passed in.
+   *
+   * This is the one seam every command's output goes through, so it is where
+   * the environment blob is dealt with: a per-command list would be one command
+   * behind the next place CML decides to attach one.
    */
   protected emit<R>(data: R, columns?: Column<R extends readonly (infer E)[] ? E : R>[]): R {
+    const shown = sanitizeOutput(data, resolveEnvMode(this.flags));
     if (this.jsonEnabled()) {
-      return data;
+      return shown;
     }
     if (this.flags.table && columns) {
-      const rows = (Array.isArray(data) ? data : [data]) as (R extends readonly (infer E)[] ? E : R)[];
+      const rows = (Array.isArray(shown) ? shown : [shown]) as (R extends readonly (infer E)[] ? E : R)[];
       this.log(table(rows, columns));
-      return data;
+      return shown;
     }
-    this.log(JSON.stringify(data, null, 2));
-    return data;
+    this.log(JSON.stringify(shown, null, 2));
+    return shown;
   }
 
   /**

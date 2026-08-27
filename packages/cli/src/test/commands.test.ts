@@ -251,3 +251,70 @@ test("--limit stops paging even when the server offers another page", async () =
     },
   );
 });
+
+/* The blob CML injects into every project, credentials and all. `PYTHONPATH` is
+ * in it because a real investigation turned on reading that value. */
+const SECRET = "s3cret-service-account";
+const JOB = {
+  id: "j-1",
+  name: "etl",
+  script: "etl.py",
+  environment: JSON.stringify({ CML_USER: "hanke", CML_USER_PW: SECRET, PYTHONPATH: "/opt/py4j" }),
+};
+
+/** Every command that can surface an environment, driven off the same stub. */
+async function withJob(argv: string[], run: (result: { stdout: string; stderr: string }) => void): Promise<void> {
+  await withStub(
+    (req) => ({ json: req.url.includes("/jobs") ? JOB : PROJECT }),
+    async ({ url }) => run(await runCommand([...argv, ...creds(url)])),
+  );
+}
+
+test("jobs get hides the environment and names the flag that shows it", async () => {
+  await withJob(["jobs", "get", "p-1", "j-1"], (result) => {
+    const job = JSON.parse(result.stdout);
+    assert.equal(job.environment, "3 vars hidden — pass --show-env");
+    assert.equal(job.script, "etl.py", "the rest of the job is untouched");
+    assert.doesNotMatch(result.stdout + result.stderr, new RegExp(SECRET));
+  });
+});
+
+test("--json is not the way around the redaction", async () => {
+  /* The agent path is the one with the widest blast radius, so it must not be
+   * the raw one. */
+  await withJob(["jobs", "get", "p-1", "j-1", "--json"], (result) => {
+    assert.equal(JSON.parse(result.stdout).environment, "3 vars hidden — pass --show-env");
+    assert.doesNotMatch(result.stdout, new RegExp(SECRET));
+  });
+});
+
+test("--show-env keeps the ordinary values readable and masks the credential", async () => {
+  await withJob(["jobs", "get", "p-1", "j-1", "--show-env"], (result) => {
+    assert.deepEqual(JSON.parse(JSON.parse(result.stdout).environment), {
+      CML_USER: "hanke",
+      CML_USER_PW: "***",
+      PYTHONPATH: "/opt/py4j",
+    });
+    assert.doesNotMatch(result.stdout, new RegExp(SECRET));
+  });
+});
+
+test("--reveal prints the values and says out loud that it did", async () => {
+  await withJob(["jobs", "get", "p-1", "j-1", "--reveal"], (result) => {
+    assert.match(JSON.parse(result.stdout).environment, new RegExp(SECRET));
+    assert.match(result.stderr, /--reveal/, "revealing a secret must never be quiet");
+  });
+});
+
+test("the redaction reaches a listing and the raw escape hatch too", async () => {
+  await withStub(
+    (req) => ({ json: req.url.includes("/jobs") ? { jobs: [JOB] } : PROJECT }),
+    async ({ url }) => {
+      const listed = await runCommand(["jobs", "list", "p-1", ...creds(url)]);
+      assert.doesNotMatch(listed.stdout, new RegExp(SECRET));
+
+      const raw = await runCommand(["raw", "/api/v2/projects/p-1/jobs", ...creds(url)]);
+      assert.doesNotMatch(raw.stdout, new RegExp(SECRET), "raw must not be the bypass either");
+    },
+  );
+});

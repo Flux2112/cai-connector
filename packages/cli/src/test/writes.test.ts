@@ -219,6 +219,39 @@ test("jobs run --wait exits WORKLOAD on a failed run, still printing it", async 
   );
 });
 
+test("jobs run --wait ends on the run's status, not on the whole object", async () => {
+  const secret = "s3cret-service-account";
+  const finished = {
+    id: "r-1",
+    status: "ENGINE_SUCCEEDED",
+    created_at: "2026-08-27T09:00:00Z",
+    running_at: "2026-08-27T09:00:10Z",
+    finished_at: "2026-08-27T09:04:00Z",
+    environment: JSON.stringify({ CML_USER_PW: secret }),
+    job: { id: "j-1", environment: JSON.stringify({ IAM_PASSWORD: secret }) },
+  };
+  await withStub(
+    (req) => {
+      if (req.url.endsWith("/runs") && req.method === "POST") return { json: { id: "r-1", status: "ENGINE_SCHEDULING" } };
+      if (req.url.includes("/runs/r-1")) return { json: finished };
+      return { json: PROJECT };
+    },
+    async ({ url }) => {
+      const result = await runCommand(["jobs", "run", "p-1", "j-1", "--wait", "--interval", "1", ...creds(url)]);
+      assert.equal(result.exitCode, 0);
+
+      /* What a poller is owed, and nothing else — the leak in the report came
+       * from printing a whole object nobody had asked for. */
+      const printed = JSON.parse(result.stdout);
+      assert.deepEqual(Object.keys(printed).sort(), ["finished", "id", "started", "status"]);
+      assert.equal(printed.id, "r-1");
+      assert.equal(printed.status, "ENGINE_SUCCEEDED");
+      assert.equal(printed.finished, "2026-08-27T09:04:00Z");
+      assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secret));
+    },
+  );
+});
+
 /* A project's engine type decides which of the two engine fields is legal, so the
  * fixture has to say which kind it is. */
 const RUNTIME_PROJECT = { ...PROJECT, default_engine_type: "ml_runtime" };

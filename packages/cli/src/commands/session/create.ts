@@ -171,7 +171,11 @@ export default class SessionCreate extends BaseCommand<typeof SessionCreate> {
       this.warn(`the SSH config could not be updated: the tunnel is up but \`ssh ${hostAlias}\` will not resolve`);
     }
 
-    this.emit(active, [
+    /* What `emit` returns rather than `active`: with --json oclif prints the
+     * return value itself, so a command that returns its own object would be
+     * printing something `emit` never saw. A session record carries no
+     * environment today, but the rule holds everywhere or it holds nowhere. */
+    const shown = this.emit(active, [
       { header: "alias", get: (r) => r.hostAlias },
       { header: "project", get: (r) => r.projectName },
       { header: "port", get: (r) => r.port },
@@ -181,7 +185,7 @@ export default class SessionCreate extends BaseCommand<typeof SessionCreate> {
 
     /* stderr, so stdout stays exactly the record. */
     process.stderr.write(`ssh ${hostAlias}\n${remoteUriFor(hostAlias)}\n`);
-    return active;
+    return shown;
   }
 }
 

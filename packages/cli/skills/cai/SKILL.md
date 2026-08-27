@@ -75,8 +75,11 @@ sys.argv.extend(shlex.split(os.environ.get("JOB_ARGUMENTS", "")))
 
 So `arguments` is ONE string with no list form, `--env` is repeatable
 `NAME=value` and becomes a JSON object, and both are per-run overrides that leave
-the job definition alone. The created run echoes both back — read them off it
-rather than assuming.
+the job definition alone. The created run echoes both back, so without `--wait`
+read `arguments` off it rather than assuming; with `--wait` the print is only the
+status summary, so confirm either with
+`cai runs get <project> <job> <run> --show-env` (see below for why the
+environment is hidden by default).
 
 **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
 occupied path keeps the old file and stores yours as `name(1).ext`, answering 200
@@ -85,9 +88,32 @@ with `--force` the result's `stored` field is the name that was really created �
 read it, do not assume. To reuse the original name, delete the old file from the
 CML UI or a session first.
 
-`jobs run --wait` prints the run either way, so the id is always available. Exit 8
-means the run failed, was stopped, or was still going when the wait expired — the
-job did start, so retrying starts it a second time.
+`jobs run --wait` prints `id status started finished` rather than the whole run —
+`cai runs get` is one command away when you need the rest. Without `--wait` the
+created run is printed as the API returned it. Exit 8 means the run failed, was
+stopped, or was still going when the wait expired — the job did start, so retrying
+starts it a second time.
+
+## The environment blob is hidden, on purpose
+
+CML injects its own variables into a project's environment, **plaintext
+credentials among them** (`CML_USER_PW`, `IAM_PASSWORD`), and they ride along on
+every job, run and project the API returns. So `cai` replaces that field with a
+marker instead of printing it:
+
+```json
+"environment": "11 vars hidden — pass --show-env"
+```
+
+This holds for `--json` too. Do not work around it by fetching the blob another
+way: anything you print lands in your context and in the transcript, and these
+are live credentials for a real service account.
+
+- `--show-env` when you genuinely need the values — credential-shaped names come
+  back as `***`, everything else (`PYTHONPATH`, `SPARK_HOME`, …) is intact, which
+  is usually what a diagnosis needs.
+- `--reveal` prints them verbatim. Use it only when the user has asked for that
+  specific value, and expect the warning it prints.
 
 ## Creating a job
 
@@ -248,4 +274,5 @@ failure is that project's, not the tunnel's. Try another project before digging.
 - `files ls` returns basenames, not paths: listing `data` gives `raw`, not
   `data/raw`. Rejoin them yourself when walking a tree.
 - Listings take `--limit` and `--page-size`; `--verbose` logs every request to
-  stderr with the key redacted; `--table` renders for a human instead of JSON.
+  stderr with the key redacted; `--table` renders for a human instead of JSON;
+  `--show-env` and `--reveal` decide how much of an `environment` blob is printed.

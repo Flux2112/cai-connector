@@ -24,6 +24,7 @@ import { parseEnvironment } from "../lib/env";
 import { CaiCliError, EXIT, reportError } from "../lib/exit";
 import { humanSize, table } from "../lib/output";
 import { assertReadOnly } from "../lib/readonly";
+import { isSecretName, resolveEnvMode, sanitizeOutput } from "../lib/sanitize";
 import { joinWorkloads } from "../lib/workloads";
 
 test("raw accepts GET in any case and refuses every other verb", () => {
@@ -203,4 +204,125 @@ test("parseEnvironment refuses a pair with no name and a bare name alike", () =>
       `accepted ${JSON.stringify(bad)}`,
     );
   }
+});
+
+/* The environment blob CML hands back on a job or a run, with the two injected
+ * credentials from the report that prompted this. */
+const LEAKY_ENV = JSON.stringify({
+  CML_USER: "hanke",
+  CML_USER_PW: "s3cret",
+  IAM_USER: "svc_etl",
+  IAM_PASSWORD: "hunter2",
+  PYTHONPATH: "/opt/py4j",
+});
+
+test("the environment is replaced by a marker that names the flag, not dropped", () => {
+  const hidden = sanitizeOutput({ id: "r-1", environment: LEAKY_ENV }, "hide");
+  assert.equal(hidden.id, "r-1");
+  assert.equal(hidden.environment, "5 vars hidden — pass --show-env");
+});
+
+test("hiding reaches an environment nested in an array or another object", () => {
+  const hidden = sanitizeOutput(
+    { jobs: [{ environment: LEAKY_ENV }, { environment: { A: "1" } }], project: { environment: LEAKY_ENV } },
+    "hide",
+  );
+  assert.match(hidden.jobs[0].environment as string, /hidden/);
+  assert.equal(hidden.jobs[1].environment, "1 var hidden — pass --show-env");
+  assert.match(hidden.project.environment as string, /hidden/);
+});
+
+test("hiding leaves everything that is not an environment alone and never mutates its input", () => {
+  const original = { id: "j-1", script: "etl.py", environment: LEAKY_ENV, nested: { name: "x" } };
+  const hidden = sanitizeOutput(original, "hide");
+  assert.equal(hidden.script, "etl.py");
+  assert.deepEqual(hidden.nested, { name: "x" });
+  assert.equal(original.environment, LEAKY_ENV, "the caller's own copy must still be usable");
+});
+
+test("an empty environment is left as it is rather than reported as hidden", () => {
+  /* `""` is how the API reports an unset environment; claiming "0 vars hidden"
+   * would invent a blob that is not there. */
+  assert.equal(sanitizeOutput({ environment: "" }, "hide").environment, "");
+  assert.equal(sanitizeOutput({ environment: null }, "hide").environment, null);
+});
+
+test("an environment that is not a JSON object is hidden too, and points at the flag that works", () => {
+  /* `--show-env` masks name by name, so it cannot show a blob whose names it
+   * cannot read. Naming it here would send the reader one hop wrong. */
+  for (const mode of ["hide", "mask"] as const) {
+    const hidden = sanitizeOutput({ environment: "not json at all" }, mode);
+    assert.equal(hidden.environment, "hidden (not a JSON object) — pass --reveal");
+  }
+});
+
+test("--show-env keeps the diagnostic values and masks only the credential-shaped names", () => {
+  const masked = sanitizeOutput({ environment: LEAKY_ENV }, "mask");
+  /* A JSON string in stays a JSON string out: the field's shape is part of the
+   * contract a script already parses. */
+  assert.deepEqual(JSON.parse(masked.environment as string), {
+    CML_USER: "hanke",
+    CML_USER_PW: "***",
+    IAM_USER: "svc_etl",
+    IAM_PASSWORD: "***",
+    PYTHONPATH: "/opt/py4j",
+  });
+});
+
+test("--show-env keeps an object-shaped environment an object", () => {
+  const masked = sanitizeOutput({ environment: { TOKEN: "abc", MODE: "full" } }, "mask");
+  assert.deepEqual(masked.environment, { TOKEN: "***", MODE: "full" });
+});
+
+test("the deny-list catches the shapes a credential name takes, and nothing else", () => {
+  for (const name of [
+    "CML_USER_PW",
+    "IAM_PASSWORD",
+    "PW",
+    "DB_PASSWD",
+    "MY_SECRET",
+    "GH_TOKEN",
+    "AWS_CREDENTIALS",
+    "api_key",
+    "CDSW_APIV2_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "SSH_PRIVATE_KEY",
+  ]) {
+    assert.equal(isSecretName(name), true, `${name} must be masked`);
+  }
+  for (const name of ["CML_USER", "PYTHONPATH", "SPARK_HOME", "PARTITION_KEY", "PWD_STYLE_PATH", "TOKENIZER"]) {
+    assert.equal(isSecretName(name), false, `${name} must stay readable`);
+  }
+});
+
+test("a camelCase name is judged the same as its SCREAMING_SNAKE twin", () => {
+  /* Both spellings turn up in a real environment, and `apiToken` is exactly as
+   * much of a credential as `API_TOKEN`. */
+  for (const name of ["apiToken", "authToken", "sessionToken", "privateKey", "dbPassword"]) {
+    assert.equal(isSecretName(name), true, `${name} must be masked`);
+  }
+  for (const name of ["tokenizer", "partitionKey", "pythonPath"]) {
+    assert.equal(isSecretName(name), false, `${name} must stay readable`);
+  }
+});
+
+test("the two credentials CML injects are named outright, not left to the patterns", () => {
+  /* The patterns catch both today. The list is the floor under them: what a
+   * name looks like is a judgement that may be narrowed, what this platform
+   * puts in every environment is not. */
+  for (const name of ["CML_USER_PW", "IAM_PASSWORD", "CDSW_API_KEY", "CDSW_APIV2_KEY"]) {
+    assert.equal(isSecretName(name), true, `${name} must be masked`);
+  }
+});
+
+test("--reveal hands back exactly what the API said", () => {
+  const original = { environment: LEAKY_ENV, id: "r-1" };
+  assert.deepEqual(sanitizeOutput(original, "reveal"), original);
+});
+
+test("--reveal beats --show-env, and hiding is what happens without either", () => {
+  assert.equal(resolveEnvMode({ "show-env": false, reveal: false }), "hide");
+  assert.equal(resolveEnvMode({ "show-env": true, reveal: false }), "mask");
+  assert.equal(resolveEnvMode({ "show-env": false, reveal: true }), "reveal");
+  assert.equal(resolveEnvMode({ "show-env": true, reveal: true }), "reveal");
 });
