@@ -18,108 +18,40 @@
 "use strict";
 
 /*
- * Copy the bundled agent skill into the user's skills directory on install.
+ * Install the bundled agent skill at install time, where that is still allowed.
  *
  * Plain JavaScript outside `rootDir`, like `bin/run.js`, so `tsc` never sees it.
  *
- * Three rules this script holds to, because a postinstall that writes into
- * someone's home directory has to be a good guest:
+ * **This is the optimisation, not the mechanism.** npm 12 blocks lifecycle
+ * scripts unless the package is named in `allow-scripts`, and the block is a
+ * warning on the installing user's terminal rather than an error — so a package
+ * that depends on this script to place its skill simply does not place it, and
+ * nobody finds out. `src/lib/skills.ts` therefore repairs the skill from the CLI
+ * itself on every command, and this script only gets it there sooner, on the
+ * machines that do run it. Both call the same code so the two paths cannot
+ * drift; the rules, including the stamp that makes an upgrade land, live there.
  *
- *  - **It never fails the install.** Every path out of here is exit 0, whatever
- *    happened. An unwritable home directory is not a reason for `npm install` to
- *    fail.
- *  - **It never overwrites edits.** A destination that differs from the bundled
- *    copy and is not a previous copy of it is left alone; the user is told where
- *    the new version is instead.
- *  - **It skips development installs.** Running `npm install` in the repository
- *    that contains this package must not touch the developer's own skills.
+ * It never fails an install: every path out of here is exit 0, whatever
+ * happened. An unwritable home directory is not a reason for `npm install` to
+ * fail.
  */
 
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 
 const PACKAGE_DIR = path.resolve(__dirname, "..");
-const SOURCE = path.join(PACKAGE_DIR, "skills");
-
-function say(line) {
-  process.stdout.write(`cai: ${line}\n`);
-}
-
-/** `~/.claude/skills`, or wherever the caller says. */
-function destination() {
-  const override = (process.env.CAI_SKILLS_DIR ?? "").trim();
-  return override || path.join(os.homedir(), ".claude", "skills");
-}
-
-/**
- * A workspace install of this very repository, rather than a real installation.
- *
- * `INIT_CWD` is where npm was invoked. If this package sits inside it and that
- * directory is a git checkout, the install is somebody working on the CLI.
- */
-function isDevelopmentInstall() {
-  const initCwd = process.env.INIT_CWD;
-  if (!initCwd) {
-    return false;
-  }
-  const relative = path.relative(path.resolve(initCwd), PACKAGE_DIR);
-  const inside = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
-  return inside && fs.existsSync(path.join(initCwd, ".git"));
-}
-
-function copySkill(name, from, to) {
-  const target = path.join(to, name);
-  fs.mkdirSync(target, { recursive: true });
-
-  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      copySkill(entry.name, path.join(from, entry.name), target);
-      continue;
-    }
-    const source = path.join(from, entry.name);
-    const destinationFile = path.join(target, entry.name);
-    const incoming = fs.readFileSync(source, "utf8");
-
-    if (fs.existsSync(destinationFile)) {
-      const existing = fs.readFileSync(destinationFile, "utf8");
-      if (existing === incoming) {
-        continue;
-      }
-      /* Changed on both sides, or edited locally: leave it and say so. */
-      const beside = `${destinationFile}.new`;
-      fs.writeFileSync(beside, incoming, "utf8");
-      say(`kept your ${destinationFile}; the new version is at ${beside}`);
-      continue;
-    }
-
-    fs.writeFileSync(destinationFile, incoming, "utf8");
-    say(`installed the ${name} skill into ${target}`);
-  }
-}
-
-function main() {
-  if (process.env.CAI_SKIP_SKILLS) {
-    return;
-  }
-  if (!fs.existsSync(SOURCE)) {
-    return;
-  }
-  if (isDevelopmentInstall()) {
-    return;
-  }
-
-  const to = destination();
-  for (const entry of fs.readdirSync(SOURCE, { withFileTypes: true })) {
-    if (entry.isDirectory()) {
-      copySkill(entry.name, path.join(SOURCE, entry.name), to);
-    }
-  }
-}
 
 try {
-  main();
+  const { syncSkills } = require(path.join(PACKAGE_DIR, "out", "lib", "skills.js"));
+  const { version } = require(path.join(PACKAGE_DIR, "package.json"));
+
+  syncSkills({
+    packageDir: PACKAGE_DIR,
+    version,
+    report: (line) => process.stdout.write(`cai: ${line}\n`),
+  });
 } catch (err) {
-  /* Deliberately swallowed: see the header. */
-  say(`could not install the bundled skills (${String(err)}); the CLI itself is fine`);
+  /* Deliberately swallowed: see the header. `out/` is missing in a source
+   * checkout that has not been compiled, which is a developer's problem and
+   * never an installing user's. */
+  process.stdout.write(`cai: could not install the bundled skills (${String(err)}); the CLI itself is fine\n`);
 }

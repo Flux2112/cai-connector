@@ -181,10 +181,23 @@ carries no numeric id, and `cdswctl` wants one.
 
 ## Agent skills
 
-Installing this package copies a `cai` skill into `~/.claude/skills`, describing
-these commands, the exit codes and the sharp edges. It never overwrites a copy you
-have edited — it writes `SKILL.md.new` beside it instead. `CAI_SKIP_SKILLS=1` turns
-it off; `CAI_SKILLS_DIR` sends it somewhere else.
+This package ships a `cai` skill for `~/.claude/skills`, describing these commands, the
+exit codes and the sharp edges. **It installs and updates itself** — every command checks
+on its way out that the copy on disk is the one this version ships, so an upgrade never
+leaves a skill describing a CLI that no longer behaves that way.
+
+It is done from the CLI rather than from `postinstall` because a postinstall cannot be
+relied on to run: **npm 12 blocks lifecycle scripts** unless the package is named in
+`allow-scripts`, and the block is a warning on your terminal rather than an error — the
+install succeeds and the skill is simply never written. The postinstall is still there and
+still runs where scripts are allowed; it just isn't the mechanism.
+
+A copy you have edited is never overwritten: the new version is written as `SKILL.md.new`
+beside it and the CLI says so. That is decided from a `.cai-skill.json` stamp recording
+what the CLI last wrote, so "your edit" and "last version's file" are told apart rather
+than lumped together. A skill directory installed before stamps existed is brought up to
+date once, keeping what it replaced as `SKILL.md.bak`. `CAI_SKIP_SKILLS=1` turns the whole
+thing off; `CAI_SKILLS_DIR` sends it somewhere else.
 
 ## Notes
 

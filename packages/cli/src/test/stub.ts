@@ -79,7 +79,15 @@ export type CommandResult = { stdout: string; stderr: string; exitCode: number }
 
 /** Variables that would otherwise let the developer's own machine answer for
  *  the test — the credentials the CLI is designed to find without being told. */
-const AMBIENT = ["CML_API_KEY", "CAI_URL", "CML_URL", "XDG_CONFIG_HOME", "CAI_STORAGE_DIR"] as const;
+const AMBIENT = [
+  "CML_API_KEY",
+  "CAI_URL",
+  "CML_URL",
+  "XDG_CONFIG_HOME",
+  "CAI_STORAGE_DIR",
+  "CAI_SKILLS_DIR",
+  "CAI_SKIP_SKILLS",
+] as const;
 
 /**
  * Run the real binary in a child process.
@@ -105,6 +113,11 @@ export async function runCommand(argv: string[], env: Record<string, string> = {
     delete childEnv[name];
   }
   childEnv[process.platform === "win32" ? "APPDATA" : "XDG_CONFIG_HOME"] = emptyConfig;
+  /* Off unless a test asks for it. Every command syncs the bundled skill on its
+   * way out, and a test run must never write into the developer's own
+   * `~/.claude/skills`. The skill tests pass `CAI_SKIP_SKILLS: ""` with a
+   * `CAI_SKILLS_DIR` of their own. */
+  childEnv.CAI_SKIP_SKILLS = "1";
   Object.assign(childEnv, env);
 
   return new Promise<CommandResult>((resolve) => {

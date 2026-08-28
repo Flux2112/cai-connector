@@ -16,6 +16,9 @@
  */
 
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 
 import { EXIT } from "../lib/exit";
@@ -248,6 +251,28 @@ test("--limit stops paging even when the server offers another page", async () =
       const result = await runCommand(["projects", "list", ...creds(url), "--limit", "2"]);
       assert.equal(JSON.parse(result.stdout).length, 2);
       assert.equal(requests.length, 1);
+    },
+  );
+});
+
+test("a command brings the bundled skill up to date on its way out", async () => {
+  /* The mechanism, not the postinstall: npm 12 blocks lifecycle scripts unless
+   * the package is allow-listed, so an upgrade that relied on one would leave
+   * the skill describing a CLI that no longer behaves that way. */
+  const skillsDir = fs.mkdtempSync(path.join(os.tmpdir(), "cai-cli-skills-"));
+  await withStub(
+    () => ({ json: { valid: true, username: "HANKE", message: "ok" } }),
+    async ({ url }) => {
+      const result = await runCommand(["whoami", ...creds(url)], {
+        CAI_SKIP_SKILLS: "",
+        CAI_SKILLS_DIR: skillsDir,
+      });
+
+      assert.equal(result.exitCode, 0);
+      assert.ok(fs.existsSync(path.join(skillsDir, "cai", "SKILL.md")), "the skill must install itself");
+      /* Everything it has to say goes to stderr: stdout is still only the answer. */
+      assert.deepEqual(JSON.parse(result.stdout), { valid: true, username: "HANKE", message: "ok" });
+      assert.match(result.stderr, /installed the cai skill/);
     },
   );
 });
