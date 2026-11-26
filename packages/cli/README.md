@@ -98,7 +98,7 @@ drives `cdswctl.exe` and finds tunnels with a PowerShell process scan.
 
 `<project>` is accepted as `owner/name` or as an opaque project id. Listings take `--limit`
 and `--page-size`; `--verbose` logs each request to stderr with the key redacted.
-`--show-env` and `--reveal` decide how much of an `environment` blob is printed.
+`--env-keys`, `--show-env` and `--reveal` decide how much of an `environment` blob is printed.
 
 ## Environment variables in the output
 
@@ -109,12 +109,14 @@ a terminal, its scrollback, an agent's context window and a saved transcript at 
 command therefore replaces it with a marker naming the way back:
 
 ```json
-"environment": "11 vars hidden — pass --show-env"
+"environment": "11 vars hidden — pass --env-keys for the names, --show-env for the values"
 ```
 
 - The marker is printed rather than the field dropped, so nobody learns the field does not
   exist. It applies to `--json` as well: the agent path is the one with the widest reach, so
   it must not be the raw one.
+- `--env-keys` prints the variable names as an array and no values at all — the way to see
+  which variables exist, or whether a run's `--env` arrived.
 - `--show-env` prints the blob with **credential-shaped names masked** and everything else
   intact — `PYTHONPATH` stays readable, `CML_USER_PW` becomes `***`. Names are judged on
   shape: `*PASSWORD*`, `*SECRET*`, `*CREDENTIAL*`, a `PW` or `TOKEN` part, and a `KEY` part
@@ -122,7 +124,8 @@ command therefore replaces it with a marker naming the way back:
   `TOKENIZER` and `PARTITION_KEY` stay readable — and `camelCase` is split the same way, so
   `apiToken` is treated exactly like `API_TOKEN`. The names CML itself injects
   (`CML_USER_PW`, `IAM_PASSWORD`, `CDSW_API_KEY`, `CDSW_APIV2_KEY`) are listed outright as
-  a floor under those patterns.
+  a floor under those patterns. URLs, connection strings, hosts and user names are not
+  credential-shaped and print in full.
 - `--reveal` prints it verbatim and warns on stderr that it did.
 - Nothing else changes: ids, status and exit codes are all fully usable without the blob, so
   no script is ever pushed to `--show-env` just to work.

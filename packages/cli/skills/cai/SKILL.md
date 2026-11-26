@@ -26,7 +26,9 @@ cai apps list <project>
 
 One API key does everything, resolved in this order: `--api-key` (avoid — argv is
 readable by every process), `$CML_API_KEY`, then what `cai login` stored. The
-instance URL comes from `--url`, `$CAI_URL`, or the same file.
+instance URL comes from `--url`, `$CAI_URL`, or the same file. `cai login` writes
+that file to `%APPDATA%\cai\credentials.json` on Windows and
+`$XDG_CONFIG_HOME/cai/credentials.json` (default `~/.config/cai/`) elsewhere.
 
 If TLS fails with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, the instance is serving only
 its leaf certificate. Point `NODE_EXTRA_CA_CERTS` at a PEM holding the issuing
@@ -78,7 +80,7 @@ So `arguments` is ONE string with no list form, `--env` is repeatable
 the job definition alone. The created run echoes both back, so without `--wait`
 read `arguments` off it rather than assuming; with `--wait` the print is only the
 status summary, so confirm either with
-`cai runs get <project> <job> <run> --show-env` (see below for why the
+`cai runs get <project> <job> <run> --env-keys` (see below for why the
 environment is hidden by default).
 
 **`files put` cannot replace a file.** The API has no overwrite: uploading onto an
@@ -102,18 +104,23 @@ every job, run and project the API returns. So `cai` replaces that field with a
 marker instead of printing it:
 
 ```json
-"environment": "11 vars hidden — pass --show-env"
+"environment": "11 vars hidden — pass --env-keys for the names, --show-env for the values"
 ```
 
 This holds for `--json` too. Do not work around it by fetching the blob another
 way: anything you print lands in your context and in the transcript, and these
 are live credentials for a real service account.
 
-- `--show-env` when you genuinely need the values — credential-shaped names come
-  back as `***`, everything else (`PYTHONPATH`, `SPARK_HOME`, …) is intact, which
-  is usually what a diagnosis needs.
-- `--reveal` prints them verbatim. Use it only when the user has asked for that
-  specific value, and expect the warning it prints.
+Start with the names, and print a value only when the task turns on it:
+
+- `--env-keys` lists the variable names and no values. It answers "which
+  variables exist" and "did my `--env` arrive", so reach for it first.
+- `--show-env` prints the values with only credential-shaped names (`*_PW`,
+  `*PASSWORD*`, `*TOKEN*`, …) masked as `***`. **URLs, connection strings, hosts
+  and user names print in full**, so treat its output as sensitive and use it when
+  a value itself is the diagnosis (`PYTHONPATH`, `SPARK_HOME`, …).
+- `--reveal` prints everything verbatim. Use it only when the user has asked for
+  that specific value, and expect the warning it prints.
 
 ## Creating a job
 
@@ -275,4 +282,5 @@ failure is that project's, not the tunnel's. Try another project before digging.
   `data/raw`. Rejoin them yourself when walking a tree.
 - Listings take `--limit` and `--page-size`; `--verbose` logs every request to
   stderr with the key redacted; `--table` renders for a human instead of JSON;
-  `--show-env` and `--reveal` decide how much of an `environment` blob is printed.
+  `--env-keys`, `--show-env` and `--reveal` decide how much of an `environment`
+  blob is printed.

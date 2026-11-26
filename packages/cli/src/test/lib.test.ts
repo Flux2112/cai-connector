@@ -219,7 +219,7 @@ const LEAKY_ENV = JSON.stringify({
 test("the environment is replaced by a marker that names the flag, not dropped", () => {
   const hidden = sanitizeOutput({ id: "r-1", environment: LEAKY_ENV }, "hide");
   assert.equal(hidden.id, "r-1");
-  assert.equal(hidden.environment, "5 vars hidden — pass --show-env");
+  assert.equal(hidden.environment, "5 vars hidden — pass --env-keys for the names, --show-env for the values");
 });
 
 test("hiding reaches an environment nested in an array or another object", () => {
@@ -228,7 +228,7 @@ test("hiding reaches an environment nested in an array or another object", () =>
     "hide",
   );
   assert.match(hidden.jobs[0].environment as string, /hidden/);
-  assert.equal(hidden.jobs[1].environment, "1 var hidden — pass --show-env");
+  assert.equal(hidden.jobs[1].environment, "1 var hidden — pass --env-keys for the names, --show-env for the values");
   assert.match(hidden.project.environment as string, /hidden/);
 });
 
@@ -250,7 +250,7 @@ test("an empty environment is left as it is rather than reported as hidden", () 
 test("an environment that is not a JSON object is hidden too, and points at the flag that works", () => {
   /* `--show-env` masks name by name, so it cannot show a blob whose names it
    * cannot read. Naming it here would send the reader one hop wrong. */
-  for (const mode of ["hide", "mask"] as const) {
+  for (const mode of ["hide", "keys", "mask"] as const) {
     const hidden = sanitizeOutput({ environment: "not json at all" }, mode);
     assert.equal(hidden.environment, "hidden (not a JSON object) — pass --reveal");
   }
@@ -267,6 +267,16 @@ test("--show-env keeps the diagnostic values and masks only the credential-shape
     IAM_PASSWORD: "***",
     PYTHONPATH: "/opt/py4j",
   });
+});
+
+test("--env-keys lists the names and prints no value at all", () => {
+  /* A name says nothing about whether a URL or a user name is sensitive where
+   * it points, so the way to see which variables exist must carry no value. */
+  const env = { DB_URL: "jdbc:postgresql://db.example.com/app", DB_USER: "svc_app", MODE: "full" };
+  for (const environment of [JSON.stringify(env), env]) {
+    const keys = sanitizeOutput({ environment }, "keys");
+    assert.deepEqual(keys.environment, ["DB_URL", "DB_USER", "MODE"]);
+  }
 });
 
 test("--show-env keeps an object-shaped environment an object", () => {
@@ -320,8 +330,11 @@ test("--reveal hands back exactly what the API said", () => {
   assert.deepEqual(sanitizeOutput(original, "reveal"), original);
 });
 
-test("--reveal beats --show-env, and hiding is what happens without either", () => {
+test("the loudest environment flag wins, and hiding is what happens without any", () => {
   assert.equal(resolveEnvMode({ "show-env": false, reveal: false }), "hide");
+  assert.equal(resolveEnvMode({ "env-keys": true }), "keys");
+  assert.equal(resolveEnvMode({ "env-keys": true, "show-env": true }), "mask");
+  assert.equal(resolveEnvMode({ "env-keys": true, reveal: true }), "reveal");
   assert.equal(resolveEnvMode({ "show-env": true, reveal: false }), "mask");
   assert.equal(resolveEnvMode({ "show-env": false, reveal: true }), "reveal");
   assert.equal(resolveEnvMode({ "show-env": true, reveal: true }), "reveal");
