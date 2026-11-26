@@ -298,7 +298,7 @@ async function withJob(argv: string[], run: (result: { stdout: string; stderr: s
 test("jobs get hides the environment and names the flag that shows it", async () => {
   await withJob(["jobs", "get", "p-1", "j-1"], (result) => {
     const job = JSON.parse(result.stdout);
-    assert.equal(job.environment, "3 vars hidden — pass --show-env");
+    assert.equal(job.environment, "3 vars hidden — pass --env-keys for the names, --show-env for the values");
     assert.equal(job.script, "etl.py", "the rest of the job is untouched");
     assert.doesNotMatch(result.stdout + result.stderr, new RegExp(SECRET));
   });
@@ -308,8 +308,21 @@ test("--json is not the way around the redaction", async () => {
   /* The agent path is the one with the widest blast radius, so it must not be
    * the raw one. */
   await withJob(["jobs", "get", "p-1", "j-1", "--json"], (result) => {
-    assert.equal(JSON.parse(result.stdout).environment, "3 vars hidden — pass --show-env");
+    assert.equal(
+      JSON.parse(result.stdout).environment,
+      "3 vars hidden — pass --env-keys for the names, --show-env for the values",
+    );
     assert.doesNotMatch(result.stdout, new RegExp(SECRET));
+  });
+});
+
+test("--env-keys prints the names and none of the values, ordinary ones included", async () => {
+  /* `--show-env` would print the user name: it is not credential-shaped. */
+  await withJob(["jobs", "get", "p-1", "j-1", "--env-keys"], (result) => {
+    assert.deepEqual(JSON.parse(result.stdout).environment, ["CML_USER", "CML_USER_PW", "PYTHONPATH"]);
+    for (const value of Object.values(JSON.parse(JOB.environment) as Record<string, string>)) {
+      assert.ok(!result.stdout.includes(value), `${value} must not be printed`);
+    }
   });
 });
 

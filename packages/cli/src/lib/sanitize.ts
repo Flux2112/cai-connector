@@ -23,10 +23,13 @@
  * not only what its author set. Printing it by default put live credentials
  * into a terminal, its scrollback, an agent's context window and a saved
  * transcript at once, none of which the caller chose when they typed the
- * command. Hiding it is therefore the default, and the two ways back are
- * explicit.
+ * command. Hiding it is therefore the default, and the ways back are explicit.
+ *
+ * `keys` prints the names alone. Masking judges a name, and a name says nothing
+ * about whether a URL or a user name is sensitive where it points, so "which
+ * variables exist" has to be answerable without printing any value at all.
  */
-export type EnvMode = "hide" | "mask" | "reveal";
+export type EnvMode = "hide" | "keys" | "mask" | "reveal";
 
 /** The one field name that carries the blob. Matched exactly (case-insensitively)
  *  so `environment_crn` and `environment_name`, which are not secrets, stay. */
@@ -37,7 +40,7 @@ const MASKED = "***";
 
 /** The way back, spelled once. A marker that names a flag which would not in
  *  fact show that particular value sends the reader one hop wrong. */
-const SHOW_ENV = "pass --show-env";
+const SHOW_ENV = "pass --env-keys for the names, --show-env for the values";
 const REVEAL = "pass --reveal";
 
 /**
@@ -113,12 +116,13 @@ export function isSecretName(name: string): boolean {
   );
 }
 
-/** Which mode the two global flags ask for. `--reveal` wins, so a caller who
- *  passes both gets the louder of the two rather than the safer one they did
- *  not ask for. */
-export function resolveEnvMode(flags: { "show-env"?: boolean; reveal?: boolean }): EnvMode {
+/** Which mode the global flags ask for. The loudest one wins, so a caller who
+ *  passes several gets what they asked for rather than a safer view they did
+ *  not. */
+export function resolveEnvMode(flags: { "env-keys"?: boolean; "show-env"?: boolean; reveal?: boolean }): EnvMode {
   if (flags.reveal) return "reveal";
-  return flags["show-env"] ? "mask" : "hide";
+  if (flags["show-env"]) return "mask";
+  return flags["env-keys"] ? "keys" : "hide";
 }
 
 /**
@@ -151,7 +155,8 @@ function envEntries(value: unknown): Record<string, unknown> | null {
  * who never sees the key learns the field does not exist and stops looking for
  * the way to get it. The shape is preserved otherwise — a JSON string in is a
  * JSON string out — because a caller already parsing it should not have to
- * branch on our redaction.
+ * branch on our redaction. `--env-keys` is the exception: it asks for a list,
+ * so it gets an array of names whatever shape the blob came in.
  */
 function sanitizeEnvironment(value: unknown, mode: EnvMode): unknown {
   if (value === undefined || value === null || value === "") {
@@ -173,6 +178,9 @@ function sanitizeEnvironment(value: unknown, mode: EnvMode): unknown {
 
   if (mode === "hide") {
     return `${names.length} var${names.length === 1 ? "" : "s"} hidden — ${SHOW_ENV}`;
+  }
+  if (mode === "keys") {
+    return names;
   }
 
   const masked: Record<string, unknown> = {};

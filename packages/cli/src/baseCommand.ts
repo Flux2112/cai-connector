@@ -60,9 +60,13 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
       description: "Log each request to stderr. The API key is redacted.",
       helpGroup: "GLOBAL",
     }),
+    "env-keys": Flags.boolean({
+      description: "Print the names in environment blobs, without any values.",
+      helpGroup: "GLOBAL",
+    }),
     "show-env": Flags.boolean({
       description:
-        "Print environment blobs, with credential-shaped names masked. They are replaced by a marker otherwise.",
+        "Print environment blobs, with credential-shaped names masked; URLs, hosts and user names print as they are. They are replaced by a marker otherwise.",
       helpGroup: "GLOBAL",
     }),
     reveal: Flags.boolean({
